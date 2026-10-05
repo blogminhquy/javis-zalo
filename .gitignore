@@ -1,0 +1,11 @@
+node_modules/
+plans/
+credentials/
+accounts.json
+*.credentials.json
+.env
+.env.*
+qr.png
+*.log
+.DS_Store
+dist/

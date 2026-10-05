@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - name: Tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - name: Install from the tag tarball
+        run: |
+          npm install -g "https://codeload.github.com/$GITHUB_REPOSITORY/tar.gz/refs/tags/$GITHUB_REF_NAME"
+          javis-zalo --version
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node -e '
+            const v = process.env.GITHUB_REF_NAME.slice(1);
+            const s = require("fs").readFileSync("CHANGELOG.md", "utf8");
+            const start = s.indexOf("## [" + v + "]");
+            if (start < 0) process.exit(1);
+            const rest = s.slice(start).split("\n").slice(1).join("\n");
+            const end = rest.search(/^## \[/m);
+            require("fs").writeFileSync("notes.md", end < 0 ? rest : rest.slice(0, end));
+          '
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md

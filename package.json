@@ -1,0 +1,51 @@
+{
+  "name": "javis-zalo",
+  "version": "1.0.0",
+  "description": "Zalo CLI and MCP server used by Javis OS: QR sign-in, multi-account, read and send messages, group notes, reminders and polls.",
+  "type": "module",
+  "bin": {
+    "javis-zalo": "src/index.js",
+    "zalo-agent": "src/index.js"
+  },
+  "main": "./src/index.js",
+  "files": [
+    "src/index.js",
+    "src/commands",
+    "src/core",
+    "src/mcp",
+    "src/utils",
+    "!src/**/*.test.js",
+    "LICENSE",
+    "DISCLAIMER.md"
+  ],
+  "scripts": {
+    "test": "node --test src/*.test.js src/**/*.test.js",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/blogminhquy/javis-zalo"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "chalk": "^5.3.0",
+    "commander": "^14.0.3",
+    "express": "^5.2.1",
+    "https-proxy-agent": "^8.0.0",
+    "node-fetch": "^3.3.0",
+    "undici": "^7.24.6",
+    "zca-js": "^2.2.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "eslint": "^10.0.3",
+    "prettier": "^3.8.1"
+  }
+}
