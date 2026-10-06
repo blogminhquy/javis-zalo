@@ -100,12 +100,26 @@ function createProxyFetch(proxyUrl) {
     return (url, init = {}) => fetch(url, { ...init, dispatcher });
 }
 
+/** Listener options applied to every Zalo instance created after the call (see setSelfListen). */
+let _selfListen = false;
+
+/**
+ * Also receive events caused by this account. zca-js drops them by default, which includes a
+ * "join" group event when THIS account added someone (the event's sourceId is us). The MCP
+ * server turns it on and filters its own messages itself; plain CLI commands keep the default.
+ * @param {boolean} on
+ */
+export function setSelfListen(on) {
+    _selfListen = !!on;
+}
+
 /** Create a Zalo instance with optional proxy. Suppress logs in JSON mode. */
 function createZalo(proxyUrl) {
     const opts = {
         // Suppress zca-js internal INFO logs when --json to keep stdout clean
         logging: !process.env.ZALO_JSON_MODE,
         imageMetadataGetter: readImageMetadata,
+        selfListen: _selfListen,
     };
     if (proxyUrl) {
         // HttpsProxyAgent for WebSocket (ws lib), ProxyAgent dispatcher for HTTP fetch

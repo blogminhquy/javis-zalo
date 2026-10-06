@@ -44,7 +44,16 @@ export function createHTTPServer(registerToolsFn, deps, port, authToken, host = 
     app.post("/mcp", async (req, res) => {
         try {
             const server = new McpServer({ name: "javis-zalo", version: pkg.version });
-            registerToolsFn(server, deps.api, deps.buffer, deps.filter, deps.config, deps.nameCache, deps.historyStore);
+            registerToolsFn(
+                server,
+                deps.api,
+                deps.buffer,
+                deps.filter,
+                deps.config,
+                deps.nameCache,
+                deps.historyStore,
+                deps.joinLog,
+            );
 
             const transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: undefined, // stateless mode
