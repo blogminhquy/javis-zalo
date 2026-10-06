@@ -2,6 +2,17 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.1.0] - 2026-10-06
+
+### Added
+- Group joins with their exact time. Zalo reports a join only live, so the MCP server now
+  listens for it and keeps a log on disk (`~/.zalo-agent-cli/group-joins.jsonl`, latest 5000).
+  New read tool `zalo_get_group_joins` filters it by group, member and date.
+- Each join also lands in the live feed (`zalo_get_messages`) as a `group.join` message sent by
+  the newcomer, so an agent can react to it in order with the chat.
+- Joins this account caused (it added someone) are no longer dropped: the MCP server listens
+  to its own events and keeps its own chat messages out of the live feed as before.
+
 ## [1.0.0] - 2026-10-05
 
 First release of javis-zalo, the Zalo CLI and MCP server maintained for Javis OS.

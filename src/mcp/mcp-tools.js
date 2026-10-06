@@ -1,7 +1,7 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 8 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
- * zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media.
+ * Registers 9 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media, zalo_get_group_joins.
  */
 
 import { z } from "zod";
@@ -54,8 +54,9 @@ function enrichThreadNames(messages, nameCache) {
  * @param {object} config - MCP config
  * @param {import("./thread-name-cache.js").ThreadNameCache} [nameCache] - Thread name cache
  * @param {import("./history-store.js").HistoryStore} [historyStore] - Message history store
+ * @param {import("./group-joins.js").GroupJoinLog} [joinLog] - Group join log
  */
-export function registerTools(server, api, buffer, filter, config, nameCache, historyStore) {
+export function registerTools(server, api, buffer, filter, config, nameCache, historyStore, joinLog) {
     const maxPerPoll = config.limits?.maxMessagesPerPoll ?? 20;
 
     // --- zalo_get_messages ---
@@ -352,6 +353,62 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 return ok({ count: messages.length, messages, cursor, hasMore });
             } catch (e) {
                 console.error("[mcp-tools] zalo_search_history error:", e.message);
+                return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_get_group_joins ---
+    server.registerTool(
+        "zalo_get_group_joins",
+        {
+            title: "Get Zalo Group Joins",
+            description:
+                "Who joined a Zalo group and WHEN (exact join time), newest last. Recorded from Zalo's live " +
+                "join events while this MCP server is connected (by link, by approval, or added by someone), " +
+                "and kept on disk across restarts. Zalo's member list has no join date, so members who " +
+                "joined before recording started, or while the server was offline, are not listed. " +
+                "In the live feed (zalo_get_messages) each join also appears as a message of type " +
+                "'group.join' sent by the newcomer.",
+            inputSchema: z.object({
+                threadId: z.string().optional().nullable().describe("Group ID; omit for all groups"),
+                userId: z.string().optional().nullable().describe("Only this member"),
+                since: z
+                    .union([z.string(), z.number()])
+                    .optional()
+                    .nullable()
+                    .describe("Only joins at/after this time - 'YYYY-MM-DD', ISO datetime, or epoch ms"),
+                until: z
+                    .union([z.string(), z.number()])
+                    .optional()
+                    .nullable()
+                    .describe("Only joins at/before this time - 'YYYY-MM-DD' (inclusive), ISO datetime, or epoch ms"),
+                limit: z.number().int().min(1).max(500).default(50).describe("Max joins to return (most recent)"),
+            }),
+        },
+        async ({ threadId, userId, since, until, limit }) => {
+            try {
+                if (!joinLog) return err("Join log unavailable - restart the MCP server.");
+                const { joins, total } = joinLog.query({
+                    threadId: threadId || null,
+                    userId: userId || null,
+                    since: parseTimeBoundary(since),
+                    until: parseTimeBoundary(until, true),
+                    limit,
+                });
+                const rows = joins.map((r) => ({
+                    threadId: r.groupId,
+                    groupName: r.groupName || nameCache?.get(r.groupId)?.name || null,
+                    userId: r.userId,
+                    userName: r.userName,
+                    addedBy: r.addedBy,
+                    addedByMe: r.addedByMe,
+                    time: r.time,
+                    timeISO: new Date(r.time).toISOString(),
+                }));
+                return ok({ count: rows.length, total, joins: rows });
+            } catch (e) {
+                console.error("[mcp-tools] zalo_get_group_joins error:", e.message);
                 return err(e.message);
             }
         },

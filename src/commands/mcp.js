@@ -5,7 +5,10 @@
  * IMPORTANT: All diagnostic output uses console.error() — stdout is the MCP transport channel.
  */
 
-import { getApi, autoLogin, clearSession } from "../core/zalo-client.js";
+import { getApi, getOwnId, autoLogin, clearSession, setSelfListen } from "../core/zalo-client.js";
+import { join } from "node:path";
+import { CONFIG_DIR } from "../core/credentials.js";
+import { GroupJoinLog, joinRecordsFromEvent, joinToBufferMessage } from "../mcp/group-joins.js";
 import { MessageBuffer } from "../mcp/message-buffer.js";
 import { HistoryStore } from "../mcp/history-store.js";
 import { reconnectDelay } from "../mcp/reconnect.js";
@@ -38,6 +41,9 @@ export function registerMCPCommands(program) {
         .action(async (opts) => {
             // Perform login explicitly here — preAction hook skips "mcp".
             // jsonMode=true: Auto-login banner must not touch stdout (JSON-RPC).
+            // selfListen: a join event where THIS account added the member is "self" to zca-js and
+            // would be dropped. Own chat messages are still kept out of the live buffer below.
+            setSelfListen(true);
             try {
                 await autoLogin(true);
             } catch (e) {
@@ -60,6 +66,12 @@ export function registerMCPCommands(program) {
             const backfillPages = config.limits?.historyBackfillPages ?? 5;
             const backfillPageTimeout = parseDuration(config.limits?.historyBackfillPageTimeout ?? "8s");
 
+            // Who joined which group and when. Zalo only reports this live, so it is kept on disk.
+            const joinLog = new GroupJoinLog(
+                join(CONFIG_DIR, "group-joins.jsonl"),
+                config.limits?.groupJoinsMax ?? 5000,
+            );
+
             // Build thread name cache (groups + friends → in-memory index)
             const nameCache = new ThreadNameCache();
             try {
@@ -77,12 +89,12 @@ export function registerMCPCommands(program) {
                         console.error(`[mcp] Invalid port: ${opts.http}. Must be 1-65535.`);
                         process.exit(1);
                     }
-                    const deps = { api: getApi(), buffer, filter, config, nameCache, historyStore };
+                    const deps = { api: getApi(), buffer, filter, config, nameCache, historyStore, joinLog };
                     const authToken = opts.auth?.trim() || null;
                     httpServer = createHTTPServer(registerTools, deps, port, authToken, opts.host || "127.0.0.1");
                     console.error(`[mcp] HTTP server started on port ${port}`);
                 } else {
-                    await createMCPServer(getApi(), buffer, filter, config, nameCache, historyStore);
+                    await createMCPServer(getApi(), buffer, filter, config, nameCache, historyStore, joinLog);
                 }
             } catch (e) {
                 console.error("[mcp] Failed to start MCP server:", e.message);
@@ -222,6 +234,23 @@ export function registerMCPCommands(program) {
                     buffer.push(normalized.threadId, normalized);
                     notifier.onMessage(normalized);
                     console.error(`[mcp] Buffered ${normalized.threadType} msg from ${normalized.threadId}`);
+                });
+
+                api.listener.on("group_event", (event) => {
+                    let records = [];
+                    try {
+                        records = joinRecordsFromEvent(event, getOwnId());
+                    } catch (e) {
+                        console.error("[mcp] group_event parse failed:", e.message);
+                        return;
+                    }
+                    if (!records.length) return;
+                    joinLog.add(records);
+                    if (!filter.shouldWatch(records[0].groupId, "group")) return;
+                    for (const rec of records) {
+                        buffer.push(rec.groupId, joinToBufferMessage(rec));
+                    }
+                    console.error(`[mcp] ${records.length} member(s) joined group ${records[0].groupId}`);
                 });
 
                 api.listener.on("connected", () => {

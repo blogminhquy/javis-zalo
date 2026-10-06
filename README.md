@@ -14,13 +14,13 @@ Needs Node.js 20 or newer. Each release is a git tag, installed straight from Gi
 account, no Git on the machine):
 
 ```bash
-npm install -g https://codeload.github.com/blogminhquy/javis-zalo/tar.gz/refs/tags/v1.0.0
+npm install -g https://codeload.github.com/blogminhquy/javis-zalo/tar.gz/refs/tags/v1.1.0
 ```
 
 Or run once without installing:
 
 ```bash
-npx -y https://codeload.github.com/blogminhquy/javis-zalo/tar.gz/refs/tags/v1.0.0 --help
+npx -y https://codeload.github.com/blogminhquy/javis-zalo/tar.gz/refs/tags/v1.1.0 --help
 ```
 
 The command is `javis-zalo`. The older name `zalo-agent` is kept as an alias.
@@ -47,8 +47,12 @@ javis-zalo mcp start --http 3847 --auth <token>   # HTTP, bound to 127.0.0.1
 ```
 
 Tools: `zalo_get_messages`, `zalo_get_history`, `zalo_search_history`, `zalo_list_threads`,
-`zalo_search_threads`, `zalo_view_media` (read), `zalo_mark_read` (write) and
-`zalo_send_message` (sends a message).
+`zalo_search_threads`, `zalo_view_media`, `zalo_get_group_joins` (read), `zalo_mark_read`
+(write) and `zalo_send_message` (sends a message).
+
+Group joins are recorded with their exact time while the server is connected and kept in
+`~/.zalo-agent-cli/group-joins.jsonl`. Zalo's member list has no join date, so members who joined
+earlier, or while the server was offline, are not in it.
 
 ## Where data lives
 
