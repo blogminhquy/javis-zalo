@@ -2,6 +2,16 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.2.0] - 2026-10-06
+
+### Added
+- Join requests for groups that require approval. Read tool `zalo_list_join_requests` lists who
+  is waiting; `zalo_review_join_requests` approves or rejects them and reports one outcome per
+  person (done, not_pending, already_member, no_permission). Both need this account to be the
+  group's owner or a deputy.
+- A new request also lands in the live feed (`zalo_get_messages`) as a `group.join_request`
+  message sent by the applicant, with their name when the pending list can be read.
+
 ## [1.1.0] - 2026-10-06
 
 ### Added

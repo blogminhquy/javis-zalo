@@ -1,6 +1,6 @@
 {
   "name": "javis-zalo",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Zalo CLI and MCP server used by Javis OS: QR sign-in, multi-account, read and send messages, group notes, reminders and polls.",
   "type": "module",
   "bin": {

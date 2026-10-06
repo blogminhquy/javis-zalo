@@ -9,6 +9,7 @@ import { getApi, getOwnId, autoLogin, clearSession, setSelfListen } from "../cor
 import { join } from "node:path";
 import { CONFIG_DIR } from "../core/credentials.js";
 import { GroupJoinLog, joinRecordsFromEvent, joinToBufferMessage } from "../mcp/group-joins.js";
+import { joinRequestRecordsFromEvent, joinRequestToBufferMessage, pendingFromApi } from "../mcp/join-requests.js";
 import { MessageBuffer } from "../mcp/message-buffer.js";
 import { HistoryStore } from "../mcp/history-store.js";
 import { reconnectDelay } from "../mcp/reconnect.js";
@@ -197,6 +198,31 @@ export function registerMCPCommands(program) {
             }
 
             /**
+             * Put join requests in the live feed. The event carries uids only, so names come from the
+             * pending list (best effort: without admin rights it fails and the uid stands in).
+             * @param {object} api - zca-js API instance
+             * @param {Array} requests - joinRequestRecordsFromEvent output (one group)
+             */
+            async function announceJoinRequests(api, requests) {
+                const groupId = requests[0].groupId;
+                if (!filter.shouldWatch(groupId, "group")) return;
+                const names = new Map();
+                try {
+                    const res = await Promise.race([
+                        api.getPendingGroupMembers(groupId),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 8000)),
+                    ]);
+                    for (const r of pendingFromApi(res).requests) names.set(r.userId, r.name);
+                } catch (e) {
+                    console.error(`[mcp] pending list for ${groupId} unavailable: ${e.message}`);
+                }
+                for (const rec of requests) {
+                    buffer.push(groupId, joinRequestToBufferMessage(rec, names.get(rec.userId) || null));
+                }
+                console.error(`[mcp] ${requests.length} join request(s) for group ${groupId}`);
+            }
+
+            /**
              * Attach Zalo listener handlers to the current API instance.
              * Must be called again after each re-login with the new API instance.
              * @param {object} api - zca-js API instance
@@ -237,6 +263,11 @@ export function registerMCPCommands(program) {
                 });
 
                 api.listener.on("group_event", (event) => {
+                    const requests = joinRequestRecordsFromEvent(event);
+                    if (requests.length) {
+                        void announceJoinRequests(api, requests);
+                        return;
+                    }
                     let records = [];
                     try {
                         records = joinRecordsFromEvent(event, getOwnId());

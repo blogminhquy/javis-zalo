@@ -1,12 +1,14 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 9 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
- * zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media, zalo_get_group_joins.
+ * Registers 11 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media, zalo_get_group_joins,
+ * zalo_list_join_requests, zalo_review_join_requests.
  */
 
 import { z } from "zod";
 import { downloadMedia, openFile } from "./media-downloader.js";
 import { parseTimeBoundary } from "./history-store.js";
+import { ADMIN_HINT, pendingFromApi, reviewOutcomes } from "./join-requests.js";
 
 /** Thread type constants matching zca-js ThreadType enum */
 const THREAD_USER = 0;
@@ -410,6 +412,75 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
             } catch (e) {
                 console.error("[mcp-tools] zalo_get_group_joins error:", e.message);
                 return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_list_join_requests ---
+    server.registerTool(
+        "zalo_list_join_requests",
+        {
+            title: "List Zalo Group Join Requests",
+            description:
+                "People waiting for approval to join a Zalo group (only for groups that require approval). " +
+                "Returns each applicant's userId and display name. " +
+                ADMIN_HINT +
+                " New requests also appear in zalo_get_messages as 'group.join_request' messages.",
+            inputSchema: z.object({
+                threadId: z.string().describe("Group ID"),
+            }),
+        },
+        async ({ threadId }) => {
+            try {
+                const { time, requests } = pendingFromApi(await api.getPendingGroupMembers(threadId));
+                return ok({
+                    threadId,
+                    groupName: nameCache?.get(threadId)?.name || null,
+                    count: requests.length,
+                    requests,
+                    time,
+                });
+            } catch (e) {
+                console.error("[mcp-tools] zalo_list_join_requests error:", e.message);
+                return err(`${e.message}. ${ADMIN_HINT}`);
+            }
+        },
+    );
+
+    // --- zalo_review_join_requests ---
+    server.registerTool(
+        "zalo_review_join_requests",
+        {
+            title: "Approve or Reject Zalo Group Join Requests",
+            description:
+                "Approve or reject people waiting to join a Zalo group. Use the userIds from " +
+                "zalo_list_join_requests. Returns one outcome per person: done, not_pending (no longer " +
+                "waiting), already_member, no_permission, or error_<code>. " +
+                ADMIN_HINT,
+            inputSchema: z.object({
+                threadId: z.string().describe("Group ID"),
+                userIds: z.array(z.string()).min(1).max(100).describe("Applicants to review"),
+                action: z.enum(["approve", "reject"]).describe("approve lets them in, reject turns them away"),
+            }),
+        },
+        async ({ threadId, userIds, action }) => {
+            try {
+                const ids = [...new Set(userIds.map((u) => String(u).trim()).filter(Boolean))];
+                if (!ids.length) return err("No userIds given.");
+                const res = await api.reviewPendingMemberRequest(
+                    { members: ids, isApprove: action === "approve" },
+                    threadId,
+                );
+                const results = reviewOutcomes(res, ids);
+                return ok({
+                    threadId,
+                    action,
+                    done: results.filter((r) => r.outcome === "done").length,
+                    results,
+                });
+            } catch (e) {
+                console.error("[mcp-tools] zalo_review_join_requests error:", e.message);
+                return err(`${e.message}. ${ADMIN_HINT}`);
             }
         },
     );
