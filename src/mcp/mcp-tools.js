@@ -67,7 +67,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
         {
             title: "Get Zalo Messages",
             description:
-                "Get messages from Zalo threads (DMs and groups). Returns buffered messages since last read. Use 'since' cursor from previous response for incremental polling.",
+                "Get messages from Zalo threads (DMs and groups). Returns buffered messages since last read. Use 'since' cursor from previous response for incremental polling. Messages sent from this account (by hand on a phone, or by you) carry isSelf: true; do not answer them as if a contact wrote them.",
             inputSchema: z.object({
                 threadId: z.string().optional().describe("Thread ID to read from. Omit for all watched threads."),
                 since: z.number().int().min(0).default(0).describe("Cursor from previous read for incremental polling"),
