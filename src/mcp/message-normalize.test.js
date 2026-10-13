@@ -90,6 +90,14 @@ describe("normalizeMessage (live buffer shape)", () => {
         assert.equal(out.timestamp, 1234);
         assert.equal(out.attachment, null);
         assert.equal(out.replyTo, null);
+        assert.equal(out.isSelf, false);
+    });
+
+    it("flags a message sent from this account (zca-js isSelf)", () => {
+        const msg = fakeMsg({ content: "em gửi báo giá" });
+        msg.isSelf = true;
+        assert.equal(normalizeMessage(msg, 1).isSelf, true);
+        assert.equal(toHistoryMessage(msg).isSelf, true);
     });
 
     it("populates replyTo for a reply", () => {

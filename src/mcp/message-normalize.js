@@ -72,6 +72,9 @@ export function normalizeMessage(msg, timestamp = Date.now()) {
         threadType: threadTypeLabel(msg.type),
         senderId: msg.data.uidFrom || null,
         senderName: msg.data.dName || null,
+        // Sent from THIS account (the owner's phone, staff on the same account, or an agent's own reply).
+        // Consumers use it to show hand-typed replies and to drop echoes of what they just sent.
+        isSelf: msg.isSelf === true,
         text,
         timestamp,
         type,
@@ -103,6 +106,7 @@ export function toHistoryMessage(msg, fallbackTs = Date.now()) {
         threadType: threadTypeLabel(msg.type),
         senderId: msg.data?.uidFrom || null,
         senderName: msg.data?.dName || null,
+        isSelf: msg.isSelf === true,
         text,
         timestamp: msg.data?.ts !== null && msg.data?.ts !== undefined ? Number(msg.data.ts) : fallbackTs,
         type,

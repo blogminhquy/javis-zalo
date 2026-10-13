@@ -39,11 +39,12 @@ export function registerMCPCommands(program) {
         .option("--http <port>", "Use HTTP transport on specified port (default: stdio)")
         .option("--auth <token>", "Bearer token for HTTP auth (only with --http)")
         .option("--host <address>", "HTTP bind address (default: 127.0.0.1, only with --http)")
+        .option("--no-self", "Keep this account's own messages out of the live feed (before 1.3.0 behaviour)")
         .action(async (opts) => {
             // Perform login explicitly here — preAction hook skips "mcp".
             // jsonMode=true: Auto-login banner must not touch stdout (JSON-RPC).
             // selfListen: a join event where THIS account added the member is "self" to zca-js and
-            // would be dropped. Own chat messages are still kept out of the live buffer below.
+            // would be dropped. Own chat messages go to the live buffer flagged isSelf (see below).
             setSelfListen(true);
             try {
                 await autoLogin(true);
@@ -237,8 +238,10 @@ export function registerMCPCommands(program) {
                         // Non-fatal — history ingest must never break live handling
                     }
 
-                    // Skip self-sent messages for the live agent buffer
-                    if (msg.isSelf) return;
+                    // Own messages (owner or staff typing on a phone, or the agent's own sends) stay in the live
+                    // buffer flagged isSelf: true. Before 1.3.0 they were dropped here, so a consumer never saw a
+                    // reply typed by hand (Javis inbox missed them) while history had them. `--no-self` restores that.
+                    if (msg.isSelf && opts.self === false) return;
 
                     const normalized = normalizeMessage(msg);
 
@@ -248,8 +251,8 @@ export function registerMCPCommands(program) {
                     // Apply noise filter (stickers, system msgs, short emoji)
                     if (!filter.shouldKeep(normalized)) return;
 
-                    // Auto-download media (images, audio, video) in background
-                    if (normalized.attachment?.url && isDownloadableMedia(normalized.type)) {
+                    // Auto-download media (images, audio, video) in background. Not for our own sends.
+                    if (!normalized.isSelf && normalized.attachment?.url && isDownloadableMedia(normalized.type)) {
                         const threadName = nameCache?.get(normalized.threadId)?.name || null;
                         autoDownloadMedia(normalized, {
                             downloadDir: config.media?.downloadDir || undefined,
@@ -258,7 +261,8 @@ export function registerMCPCommands(program) {
                     }
 
                     buffer.push(normalized.threadId, normalized);
-                    notifier.onMessage(normalized);
+                    // Nobody needs a notification about a message this account sent.
+                    if (!normalized.isSelf) notifier.onMessage(normalized);
                     console.error(`[mcp] Buffered ${normalized.threadType} msg from ${normalized.threadId}`);
                 });
 

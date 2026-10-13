@@ -2,6 +2,17 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.3.0] - 2026-10-13
+
+### Changed
+- The live feed (`zalo_get_messages`) now keeps messages sent from this account, flagged
+  `isSelf: true`, instead of dropping them. A reply the owner or a staff member types on the
+  phone used to be invisible to the agent (only `zalo_get_history` had it), so Javis' inbox
+  missed every hand-typed reply. Every message now carries `isSelf` (false for contacts), in
+  history too. Agents must not answer `isSelf` messages and should drop echoes of their own
+  sends; `mcp start --no-self` restores the old behaviour.
+- Own messages trigger no new-message notification and no media auto-download.
+
 ## [1.2.0] - 2026-10-06
 
 ### Added
