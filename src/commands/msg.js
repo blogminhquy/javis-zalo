@@ -7,6 +7,62 @@ import { resolve } from "path";
 import { getApi } from "../core/zalo-client.js";
 import { success, error, info, output } from "../utils/output.js";
 import { extractMessageText } from "../utils/extract-message-text.js";
+import { isListening, needsLiveConfirm, sendAttachments, UPLOAD_CONFIRM_TIMEOUT_MS } from "../core/send-files.js";
+
+/** Seconds to wait for the WebSocket when `--listen` opens one. */
+const LISTEN_CONNECT_TIMEOUT_S = 15;
+
+/**
+ * Open this process's own listener and wait until it is connected.
+ * Zalo keeps one Web connection per account, so this disconnects any other session of it
+ * (a running `mcp start` exits when evicted). Only for machines with no MCP server running.
+ */
+function openOwnListener(api) {
+    return new Promise((res, rej) => {
+        const timer = setTimeout(
+            () => rej(new Error(`Zalo live connection did not open within ${LISTEN_CONNECT_TIMEOUT_S}s`)),
+            LISTEN_CONNECT_TIMEOUT_S * 1000,
+        );
+        api.listener.once("connected", () => {
+            clearTimeout(timer);
+            res();
+        });
+        api.listener.once("closed", (code) => {
+            clearTimeout(timer);
+            rej(new Error(`Zalo live connection closed (code ${code})`));
+        });
+        api.listener.start({ retryOnClose: false });
+    });
+}
+
+/**
+ * After a timed-out send, zca-js still holds the upload callback (5-minute timer) and would keep
+ * the process alive. Exit shortly unless the event loop is already empty.
+ */
+function exitSoon() {
+    setTimeout(() => process.exit(), 200).unref();
+}
+
+/** Shared action of send-image and send-file: same zca-js call, deadline on file uploads. */
+async function sendPaths(threadId, paths, opts) {
+    const api = getApi();
+    const absPaths = paths.map((p) => resolve(p));
+    const timeoutS = Number(opts.timeout);
+    const timeoutMs = timeoutS > 0 ? timeoutS * 1000 : UPLOAD_CONFIRM_TIMEOUT_MS;
+    const own = Boolean(opts.listen) && absPaths.some(needsLiveConfirm) && !isListening(api);
+    if (own) await openOwnListener(api);
+    try {
+        return await sendAttachments(api, { msg: opts.caption, paths: absPaths }, threadId, Number(opts.type), {
+            timeoutMs,
+        });
+    } finally {
+        if (own) api.listener.stop();
+    }
+}
+
+const LISTEN_HELP =
+    "Open a live connection for this send (needed for non-image files). Disconnects any other Zalo Web " +
+    "session of this account, including a running MCP server; with one running, use its zalo_send_file tool";
 
 /**
  * TextStyle codes matching zca-js TextStyle enum.
@@ -159,17 +215,15 @@ export function registerMsgCommands(program) {
         .description("Send one or more images")
         .option("-t, --type <n>", "Thread type: 0=User, 1=Group", "0")
         .option("-m, --caption <text>", "Caption text", "")
+        .option("--timeout <seconds>", "Give up when Zalo has not confirmed a file upload by then", "60")
+        .option("--listen", LISTEN_HELP)
         .action(async (threadId, paths, opts) => {
             try {
-                const absPaths = paths.map((p) => resolve(p));
-                const result = await getApi().sendMessage(
-                    { msg: opts.caption, attachments: absPaths },
-                    threadId,
-                    Number(opts.type),
-                );
+                const result = await sendPaths(threadId, paths, opts);
                 output(result, program.opts().json, () => success(`Image(s) sent to ${threadId}`));
             } catch (e) {
                 error(e.message);
+                exitSoon();
             }
         });
 
@@ -177,17 +231,15 @@ export function registerMsgCommands(program) {
         .description("Send files (docx, pdf, zip, etc.)")
         .option("-t, --type <n>", "Thread type: 0=User, 1=Group", "0")
         .option("-m, --caption <text>", "Caption text", "")
+        .option("--timeout <seconds>", "Give up when Zalo has not confirmed the upload by then", "60")
+        .option("--listen", LISTEN_HELP)
         .action(async (threadId, paths, opts) => {
             try {
-                const absPaths = paths.map((p) => resolve(p));
-                const result = await getApi().sendMessage(
-                    { msg: opts.caption, attachments: absPaths },
-                    threadId,
-                    Number(opts.type),
-                );
+                const result = await sendPaths(threadId, paths, opts);
                 output(result, program.opts().json, () => success(`File(s) sent to ${threadId}`));
             } catch (e) {
                 error(e.message);
+                exitSoon();
             }
         });
 

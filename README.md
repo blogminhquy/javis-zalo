@@ -48,8 +48,19 @@ javis-zalo mcp start --http 3847 --auth <token>   # HTTP, bound to 127.0.0.1
 
 Tools: `zalo_get_messages`, `zalo_get_history`, `zalo_search_history`, `zalo_list_threads`,
 `zalo_search_threads`, `zalo_view_media`, `zalo_get_group_joins`, `zalo_list_join_requests` (read),
-`zalo_mark_read` (write), `zalo_send_message` (sends a message) and `zalo_review_join_requests`
-(approves or rejects people waiting to join a group; needs owner or deputy rights).
+`zalo_mark_read` (write), `zalo_send_message` (sends a message), `zalo_send_file` (sends files) and
+`zalo_review_join_requests` (approves or rejects people waiting to join a group; needs owner or deputy
+rights).
+
+`zalo_send_file` sends only files placed in `~/.zalo-agent-cli/outbox/`, so a prompt cannot make it
+send any other file on the machine. Zalo confirms a file upload (anything but jpg, png, webp, gif)
+only over the live connection, which the MCP server holds; without that confirmation the tool fails
+after 60 seconds and nothing is sent.
+
+The one-shot `msg send-file` command has no live connection of its own, so a file fails at once with
+that explanation. `--listen` opens one for the send, but Zalo keeps one Web connection per account:
+it disconnects any other session, and a running `mcp start` exits. With an MCP server running, send
+files through `zalo_send_file`.
 
 Group joins are recorded with their exact time while the server is connected and kept in
 `~/.zalo-agent-cli/group-joins.jsonl`. Zalo's member list has no join date, so members who joined
