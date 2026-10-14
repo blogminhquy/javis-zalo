@@ -2,7 +2,25 @@
 
 All notable changes to javis-zalo. Newest first.
 
-## [1.3.0] - 2026-10-13
+## [1.4.0] - 2026-10-14
+
+### Fixed
+- Sending a file that is not an image (xlsx, pdf, docx, zip, mp4...) no longer hangs. Zalo confirms
+  such an upload only over the live WebSocket (`file_done`), and zca-js waits for it with no
+  deadline, so `msg send-file`, which never opens a listener, waited forever (Javis killed it after
+  120 s, file not delivered). Images were unaffected: their URL comes back in the HTTP reply.
+- `msg send-file` / `msg send-image` now fail at once with a clear message when a file needs the
+  live connection and none is open, and give up after `--timeout` seconds (default 60) when Zalo
+  does not confirm. A confirmation arriving after that is ignored, so a send reported as failed is
+  never delivered later.
+
+### Added
+- MCP tool `zalo_send_file`: sends files with a caption from the MCP server, which holds the live
+  connection. Only files inside `~/.zalo-agent-cli/outbox/` are accepted.
+- `msg send-file --listen` opens a live connection for one send, for machines with no MCP server
+  running (it disconnects any other Zalo Web session of the account).
+
+ - 2026-10-13
 
 ### Changed
 - The live feed (`zalo_get_messages`) now keeps messages sent from this account, flagged

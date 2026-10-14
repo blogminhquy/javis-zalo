@@ -1,7 +1,7 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 11 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
- * zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media, zalo_get_group_joins,
+ * Registers 12 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * zalo_send_file, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media, zalo_get_group_joins,
  * zalo_list_join_requests, zalo_review_join_requests.
  */
 
@@ -9,6 +9,9 @@ import { z } from "zod";
 import { downloadMedia, openFile } from "./media-downloader.js";
 import { parseTimeBoundary } from "./history-store.js";
 import { ADMIN_HINT, pendingFromApi, reviewOutcomes } from "./join-requests.js";
+import { MAX_FILES_PER_SEND, sendFileFromOutbox } from "./send-file.js";
+import { OUTBOX_DIR } from "../core/send-files.js";
+import { getApi, isLoggedIn } from "../core/zalo-client.js";
 
 /** Thread type constants matching zca-js ThreadType enum */
 const THREAD_USER = 0;
@@ -117,6 +120,46 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 return ok({ success: true, messageId });
             } catch (e) {
                 console.error("[mcp-tools] zalo_send_message error:", e.message);
+                return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_send_file ---
+    server.registerTool(
+        "zalo_send_file",
+        {
+            title: "Send Zalo File",
+            description:
+                "Send files (xlsx, pdf, docx, zip, mp4, images...) to a Zalo thread, with an optional caption. " +
+                `Only files inside ${OUTBOX_DIR} can be sent: copy a file there first. ` +
+                "Fails within about a minute with a clear error if Zalo does not confirm the upload; nothing is sent then. " +
+                "threadType: 0=DM(User), 1=Group.",
+            inputSchema: z.object({
+                threadId: z.string().describe("Thread ID to send to"),
+                paths: z
+                    .array(z.string())
+                    .min(1)
+                    .max(MAX_FILES_PER_SEND)
+                    .describe("Absolute paths of files inside the outbox folder"),
+                caption: z.string().default("").describe("Text sent with the files"),
+                threadType: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .max(1)
+                    .default(THREAD_USER)
+                    .describe("Thread type: 0=DM(User), 1=Group"),
+            }),
+        },
+        async (args) => {
+            try {
+                // After a re-login the listener lives on a new API instance; its context gets the
+                // upload confirmations, so send from that one rather than the one captured here.
+                const live = isLoggedIn() ? getApi() : api;
+                return ok(await sendFileFromOutbox(live, args));
+            } catch (e) {
+                console.error("[mcp-tools] zalo_send_file error:", e.message);
                 return err(e.message);
             }
         },
