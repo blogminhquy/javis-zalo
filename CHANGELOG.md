@@ -20,7 +20,7 @@ All notable changes to javis-zalo. Newest first.
 - `msg send-file --listen` opens a live connection for one send, for machines with no MCP server
   running (it disconnects any other Zalo Web session of the account).
 
- - 2026-10-13
+## [1.3.0] - 2026-10-13
 
 ### Changed
 - The live feed (`zalo_get_messages`) now keeps messages sent from this account, flagged
