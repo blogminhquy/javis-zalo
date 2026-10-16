@@ -39,3 +39,5 @@ zca-js release. Try a new major version (3.x) on a test account before raising t
 2. Merge to `main` with CI green.
 3. Tag `vX.Y.Z` and push the tag. The release workflow runs the tests, installs from the tag
    tarball and publishes a GitHub Release. Javis pins that tag's tarball URL.
+   Without tag push rights, run the **Release** workflow by hand on `main` instead: it tags the
+   version in `package.json` (refusing a tag that already exists) and does the same steps.
