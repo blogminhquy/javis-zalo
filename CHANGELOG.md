@@ -2,6 +2,26 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.5.0] - 2026-10-16
+
+### Fixed
+- History survives a restart. `zalo_get_history` and `zalo_search_history` were served from memory
+  only, so every restart of the MCP server (a Javis update, a crash) wiped them and only Zalo's short
+  replay came back: a reply that arrived before the restart and fell outside the replay was gone from
+  every read tool (Javis report, 16/10/2026: a customer's "OK" none of the three tools could find).
+  History is now kept in `~/.zalo-agent-cli/history.jsonl`, 30 days (`historyKeepDays`).
+- Messages that arrived while the connection was down reach the live feed. The replay after a
+  reconnect or a restart only filled history before, so a poller of `zalo_get_messages` (Javis'
+  inbox) never saw them. They are now added to the feed flagged `recovered: true`, unless already
+  there.
+
+### Added
+- `sync` in every result of `zalo_get_messages`, `zalo_get_history` and `zalo_search_history`:
+  whether the connection was up for the whole period read (`complete`), and the outages Zalo's replay
+  did not cover (`gaps`, epoch ms). Outages are recorded across restarts (heartbeat in
+  `~/.zalo-agent-cli/sync-state.json`). `complete: false` means a message may be missing here, not
+  that there was none.
+
 ## [1.4.0] - 2026-10-14
 
 ### Fixed

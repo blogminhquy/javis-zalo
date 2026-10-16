@@ -60,9 +60,19 @@ function enrichThreadNames(messages, nameCache) {
  * @param {import("./thread-name-cache.js").ThreadNameCache} [nameCache] - Thread name cache
  * @param {import("./history-store.js").HistoryStore} [historyStore] - Message history store
  * @param {import("./group-joins.js").GroupJoinLog} [joinLog] - Group join log
+ * @param {import("./sync-log.js").SyncLog} [syncLog] - Live-connection coverage, reported as `sync` by the read tools
  */
-export function registerTools(server, api, buffer, filter, config, nameCache, historyStore, joinLog) {
+export function registerTools(server, api, buffer, filter, config, nameCache, historyStore, joinLog, syncLog) {
     const maxPerPoll = config.limits?.maxMessagesPerPoll ?? 20;
+
+    /**
+     * Coverage of a read (1.5.0): whether every message of the period could be here. Omitted when the
+     * server runs without a sync log (tests, old wiring).
+     * @param {number|null} from - window start (ms)
+     * @param {number|null} to - window end (ms)
+     */
+    const syncOf = (from, to) => (syncLog ? syncLog.status(from, to) : undefined);
+    const oldestTs = (messages) => (messages.length ? (messages[0].timestamp ?? null) : null);
 
     // --- zalo_get_messages ---
     server.registerTool(
@@ -70,7 +80,8 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
         {
             title: "Get Zalo Messages",
             description:
-                "Get messages from Zalo threads (DMs and groups). Returns buffered messages since last read. Use 'since' cursor from previous response for incremental polling. Messages sent from this account (by hand on a phone, or by you) carry isSelf: true; do not answer them as if a contact wrote them.",
+                "Get messages from Zalo threads (DMs and groups). Returns buffered messages since last read. Use 'since' cursor from previous response for incremental polling. Messages sent from this account (by hand on a phone, or by you) carry isSelf: true; do not answer them as if a contact wrote them. Messages that arrived while the connection was down and came back with Zalo's replay carry recovered: true." +
+                " Every result carries `sync`: if `sync.complete` is false, the connection was down during part of the period and a message from then may be missing here, so do not conclude the contact did not reply.",
             inputSchema: z.object({
                 threadId: z.string().optional().describe("Thread ID to read from. Omit for all watched threads."),
                 since: z.number().int().min(0).default(0).describe("Cursor from previous read for incremental polling"),
@@ -80,6 +91,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
         async ({ threadId, since, limit }) => {
             try {
                 const result = buffer.read(threadId, since, limit);
+                result.sync = syncOf(null, null);
                 // Enrich messages with thread name from cache
                 if (nameCache) {
                     for (const msg of result.messages) {
@@ -270,7 +282,8 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 "each with 'replyTo' (who/what it replies to) and 'mentions' when present. " +
                 "Optional filters: 'senderId' (one person), 'since'/'until' (date range). " +
                 "To page further back in time, pass the previous response's 'cursor' value as 'lastMsgId'. " +
-                "Note: deep/old archives beyond Zalo's replay window are not retrievable via any API.",
+                "Note: deep/old archives beyond Zalo's replay window are not retrievable via any API." +
+                " Every result carries `sync`: if `sync.complete` is false, the connection was down during part of the period and a message from then may be missing here, so do not conclude the contact did not reply.",
             inputSchema: z.object({
                 threadId: z.string().describe("Thread ID to fetch history from"),
                 threadType: z
@@ -318,6 +331,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
 
                 enrichThreadNames(messages, nameCache);
 
+                const sinceMs = parseTimeBoundary(since);
                 return ok({
                     threadId,
                     threadType: threadType === 0 ? "dm" : "group",
@@ -325,6 +339,13 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                     messages,
                     cursor,
                     hasMore,
+                    // Window = the asked range. Without `since`: a partial page covers from its oldest message;
+                    // the whole thread covers since recording began (so an outage before the one message
+                    // we have, when the contact's reply may have come, is still reported).
+                    sync: syncOf(
+                        sinceMs ?? (lastMsgId || hasMore ? oldestTs(messages) : null),
+                        parseTimeBoundary(until, true),
+                    ),
                 });
             } catch (e) {
                 console.error("[mcp-tools] zalo_get_history error:", e.message);
@@ -343,7 +364,8 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 "range. Use this for 'all messages from person X' (their DM + their messages in every group) or " +
                 "'everything between two dates'. Returns messages oldest→newest with 'replyTo' and 'mentions'. " +
                 "Provide at least one of senderId / since / until (or a threadId) to narrow the search. " +
-                "Same coverage limit as zalo_get_history (~2-week replay window + live since server start).",
+                "Same coverage limit as zalo_get_history (~2-week replay window + live since server start)." +
+                " Every result carries `sync`: if `sync.complete` is false, the connection was down during part of the period and a message from then may be missing here, so do not conclude the contact did not reply.",
             inputSchema: z.object({
                 senderId: z.string().optional().nullable().describe("Only messages sent by this user id"),
                 threadId: z
@@ -395,7 +417,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
 
                 enrichThreadNames(messages, nameCache);
 
-                return ok({ count: messages.length, messages, cursor, hasMore });
+                return ok({ count: messages.length, messages, cursor, hasMore, sync: syncOf(sinceMs, untilMs) });
             } catch (e) {
                 console.error("[mcp-tools] zalo_search_history error:", e.message);
                 return err(e.message);

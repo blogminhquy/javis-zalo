@@ -53,6 +53,7 @@ export function createHTTPServer(registerToolsFn, deps, port, authToken, host = 
                 deps.nameCache,
                 deps.historyStore,
                 deps.joinLog,
+                deps.syncLog,
             );
 
             const transport = new StreamableHTTPServerTransport({

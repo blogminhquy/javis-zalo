@@ -12,6 +12,7 @@ import { GroupJoinLog, joinRecordsFromEvent, joinToBufferMessage } from "../mcp/
 import { joinRequestRecordsFromEvent, joinRequestToBufferMessage, pendingFromApi } from "../mcp/join-requests.js";
 import { MessageBuffer } from "../mcp/message-buffer.js";
 import { HistoryStore } from "../mcp/history-store.js";
+import { HEARTBEAT_MS, SyncLog } from "../mcp/sync-log.js";
 import { reconnectDelay } from "../mcp/reconnect.js";
 import { ThreadFilter } from "../mcp/thread-filter.js";
 import { loadMCPConfig, parseDuration } from "../mcp/mcp-config.js";
@@ -64,7 +65,13 @@ export function registerMCPCommands(program) {
             const filter = new ThreadFilter(config);
 
             // History store — seeded from old-message backfill at (re)connect, grows with live messages.
-            const historyStore = new HistoryStore(config.limits?.historyMaxPerThread ?? 2000);
+            // Kept on disk since 1.5.0, so a restart (a Javis update) no longer wipes it.
+            const historyStore = new HistoryStore(config.limits?.historyMaxPerThread ?? 2000, {
+                filePath: join(CONFIG_DIR, "history.jsonl"),
+                keepDays: config.limits?.historyKeepDays ?? 30,
+            });
+            // When the live connection was down, so a read can say "may be incomplete" (1.5.0).
+            const syncLog = new SyncLog(join(CONFIG_DIR, "sync-state.json"));
             const backfillPages = config.limits?.historyBackfillPages ?? 5;
             const backfillPageTimeout = parseDuration(config.limits?.historyBackfillPageTimeout ?? "8s");
 
@@ -91,12 +98,12 @@ export function registerMCPCommands(program) {
                         console.error(`[mcp] Invalid port: ${opts.http}. Must be 1-65535.`);
                         process.exit(1);
                     }
-                    const deps = { api: getApi(), buffer, filter, config, nameCache, historyStore, joinLog };
+                    const deps = { api: getApi(), buffer, filter, config, nameCache, historyStore, joinLog, syncLog };
                     const authToken = opts.auth?.trim() || null;
                     httpServer = createHTTPServer(registerTools, deps, port, authToken, opts.host || "127.0.0.1");
                     console.error(`[mcp] HTTP server started on port ${port}`);
                 } else {
-                    await createMCPServer(getApi(), buffer, filter, config, nameCache, historyStore, joinLog);
+                    await createMCPServer(getApi(), buffer, filter, config, nameCache, historyStore, joinLog, syncLog);
                 }
             } catch (e) {
                 console.error("[mcp] Failed to start MCP server:", e.message);
@@ -122,13 +129,20 @@ export function registerMCPCommands(program) {
              * @param {object} api - zca-js API instance
              * @param {number} threadType - 0=User(DM), 1=Group
              * @param {number} gen - Backfill generation; the run bails if a newer connect supersedes it
-             * @returns {Promise<number>} Count of messages ingested
+             * @returns {Promise<{ingested: number, oldestTs: number|null, exhausted: boolean, raws: Array}|null>}
+             *   null when superseded. `exhausted`: Zalo had nothing older (an empty page), as opposed to
+             *   stopping at the page cap or on a timeout, so the replay reached as far back as it can.
+             *   `raws`: every replayed message, for putting the ones from an outage into the live feed.
              */
             async function backfillHistory(api, threadType, gen) {
                 let cursor = null;
                 let ingested = 0;
+                let oldestTs = null;
+                let exhausted = false;
+                const raws = [];
                 for (let page = 0; page < backfillPages; page++) {
-                    if (gen !== backfillGeneration) break; // superseded by a newer connect
+                    if (gen !== backfillGeneration) return null; // superseded by a newer connect
+                    // null = timed out or failed (not "nothing older"): coverage stays unknown.
                     const batch = await new Promise((resolve) => {
                         const handler = (messages, type) => {
                             if (type !== threadType) return; // wait for our thread type
@@ -138,7 +152,7 @@ export function registerMCPCommands(program) {
                         };
                         const timer = setTimeout(() => {
                             api.listener.removeListener("old_messages", handler);
-                            resolve([]);
+                            resolve(null);
                         }, backfillPageTimeout);
                         api.listener.on("old_messages", handler);
                         try {
@@ -146,12 +160,16 @@ export function registerMCPCommands(program) {
                         } catch {
                             clearTimeout(timer);
                             api.listener.removeListener("old_messages", handler);
-                            resolve([]);
+                            resolve(null);
                         }
                     });
 
-                    if (gen !== backfillGeneration) break; // superseded while awaiting this page
-                    if (batch.length === 0) break;
+                    if (gen !== backfillGeneration) return null; // superseded while awaiting this page
+                    if (batch === null) break;
+                    if (batch.length === 0) {
+                        exhausted = true;
+                        break;
+                    }
 
                     // Backfill batches span all threads of this type — group by threadId.
                     const byThread = new Map();
@@ -160,6 +178,10 @@ export function registerMCPCommands(program) {
                         if (!hm.threadId || !hm.msgId) continue;
                         if (!byThread.has(hm.threadId)) byThread.set(hm.threadId, []);
                         byThread.get(hm.threadId).push(hm);
+                        if (Number.isFinite(hm.timestamp) && (oldestTs === null || hm.timestamp < oldestTs)) {
+                            oldestTs = hm.timestamp;
+                        }
+                        raws.push(raw);
                     }
                     for (const [tid, msgs] of byThread) ingested += historyStore.ingest(tid, msgs);
 
@@ -167,10 +189,51 @@ export function registerMCPCommands(program) {
                     // threads), not per-thread — that's how Zalo's requestOldMessages(lastId) paginates.
                     const last = batch[batch.length - 1];
                     const nextId = last?.data?.actionId || last?.data?.msgId;
-                    if (!nextId || String(nextId) === String(cursor)) break;
+                    if (!nextId || String(nextId) === String(cursor)) {
+                        exhausted = true;
+                        break;
+                    }
                     cursor = nextId;
                 }
-                return ingested;
+                return { ingested, oldestTs, exhausted, raws };
+            }
+
+            /**
+             * Put messages that arrived during an outage into the live feed (1.5.0). Before, the replay
+             * after a reconnect or a restart only filled the history store, so a poller of
+             * zalo_get_messages (Javis' inbox) never saw a message that came in while the listener was
+             * down. Same filters as a live message; flagged `recovered: true`; skipped when the live feed
+             * already has it.
+             * @param {Array} raws - raw replayed messages
+             * @param {number} gapFrom - start of the outage (ms)
+             * @returns {number} count pushed
+             */
+            function feedRecovered(raws, gapFrom) {
+                const picked = [];
+                for (const raw of raws) {
+                    const ts = Number(raw?.data?.ts);
+                    if (!Number.isFinite(ts) || ts < gapFrom) continue;
+                    if (raw.isSelf && opts.self === false) continue;
+                    picked.push({ raw, ts });
+                }
+                picked.sort((a, b) => a.ts - b.ts);
+                let pushed = 0;
+                for (const { raw, ts } of picked) {
+                    let normalized;
+                    try {
+                        normalized = normalizeMessage(raw, ts);
+                    } catch {
+                        continue;
+                    }
+                    if (!normalized.threadId || !filter.shouldWatch(normalized.threadId, normalized.threadType))
+                        continue;
+                    if (!filter.shouldKeep(normalized)) continue;
+                    if (buffer.has(normalized.threadId, normalized.id)) continue;
+                    normalized.recovered = true;
+                    buffer.push(normalized.threadId, normalized);
+                    pushed++;
+                }
+                return pushed;
             }
 
             /**
@@ -185,14 +248,21 @@ export function registerMCPCommands(program) {
              */
             async function primeHistoryOnConnect(api) {
                 const gen = ++backfillGeneration;
+                const gap = syncLog.currentGap();
                 try {
                     const dm = await backfillHistory(api, 0, gen);
                     const group = await backfillHistory(api, 1, gen);
-                    if (gen === backfillGeneration) {
-                        console.error(
-                            `[mcp] History backfill: ${dm} DM + ${group} group message(s) across ${historyStore.threadIds().length} thread(s)`,
-                        );
-                    }
+                    if (gen !== backfillGeneration || !dm || !group) return;
+                    syncLog.onBackfill({ dm, group });
+                    const recovered = gap ? feedRecovered([...dm.raws, ...group.raws], gap.from) : 0;
+                    console.error(
+                        `[mcp] History backfill: ${dm.ingested} DM + ${group.ingested} group message(s) across ` +
+                            `${historyStore.threadIds().length} thread(s)` +
+                            (gap
+                                ? `; outage of ${Math.round((gap.to - gap.from) / 1000)}s ` +
+                                  `${gap.recovered ? "covered" : "NOT fully covered"}, ${recovered} message(s) recovered to the live feed`
+                                : ""),
+                    );
                 } catch (e) {
                     console.error("[mcp] History backfill failed (non-fatal):", e.message);
                 }
@@ -293,16 +363,19 @@ export function registerMCPCommands(program) {
                         console.error(`[mcp] Reconnected (#${reconnectCount})`);
                     }
                     lastConnectedAt = Date.now();
+                    syncLog.onConnected();
                     // Seed history from the server backfill while inside the sync window.
                     primeHistoryOnConnect(api);
                 });
 
                 api.listener.on("disconnected", (code) => {
+                    syncLog.onDisconnected();
                     if (shuttingDown) return;
                     console.error(`[mcp] Disconnected (code: ${code}). Auto-retrying...`);
                 });
 
                 api.listener.on("closed", async (code) => {
+                    syncLog.onDisconnected();
                     // Ctrl+C stops the listener, which fires this event — don't re-login.
                     if (shuttingDown) return;
                     if (code === CLOSE_DUPLICATE) {
@@ -375,6 +448,14 @@ export function registerMCPCommands(program) {
                 const api = getApi();
                 attachListenerHandlers(api);
                 api.listener.start({ retryOnClose: true });
+                // Heartbeat on disk: when this process is killed (an update, a crash), the next start
+                // knows from when messages may be missing.
+                setInterval(
+                    () => {
+                        if (syncLog.dueHeartbeat()) syncLog.heartbeat();
+                    },
+                    Math.min(15000, HEARTBEAT_MS),
+                ).unref();
                 console.error("[mcp] Zalo listener started. MCP server ready.");
             } catch (e) {
                 console.error("[mcp] Failed to start listener:", e.message);

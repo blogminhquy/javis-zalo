@@ -23,15 +23,16 @@ const pkg = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf8
  * @param {import("./thread-name-cache.js").ThreadNameCache} [nameCache] - Thread name cache
  * @param {import("./history-store.js").HistoryStore} [historyStore] - Message history store
  * @param {import("./group-joins.js").GroupJoinLog} [joinLog] - Group join log
+ * @param {import("./sync-log.js").SyncLog} [syncLog] - Live-connection coverage
  * @returns {Promise<McpServer>}
  */
-export async function createMCPServer(api, buffer, filter, config, nameCache, historyStore, joinLog) {
+export async function createMCPServer(api, buffer, filter, config, nameCache, historyStore, joinLog, syncLog) {
     const server = new McpServer({
         name: "javis-zalo",
         version: pkg.version,
     });
 
-    registerTools(server, api, buffer, filter, config, nameCache, historyStore, joinLog);
+    registerTools(server, api, buffer, filter, config, nameCache, historyStore, joinLog, syncLog);
 
     const transport = new StdioServerTransport();
     await server.connect(transport);

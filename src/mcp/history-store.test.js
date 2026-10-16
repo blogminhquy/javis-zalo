@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { HistoryStore, parseTimeBoundary } from "./history-store.js";
 
 /** Helper: create a history message */
@@ -220,5 +223,62 @@ describe("parseTimeBoundary", () => {
         assert.equal(parseTimeBoundary(undefined), null);
         assert.equal(parseTimeBoundary(""), null);
         assert.equal(parseTimeBoundary("not-a-date"), null);
+    });
+});
+
+describe("HistoryStore on disk (1.5.0)", () => {
+    const tmpFile = () => join(mkdtempSync(join(tmpdir(), "history-")), "history.jsonl");
+
+    it("a restart keeps what was stored", () => {
+        const file = tmpFile();
+        const now = Date.now();
+        const a = new HistoryStore(2000, { filePath: file });
+        a.ingest("T1", [m("1", now - 1000), m("2", now - 500)]);
+        a.ingest("T2", [msg("9", now - 100, { threadId: "T2" })]);
+        const b = new HistoryStore(2000, { filePath: file });
+        assert.equal(b.count("T1"), 2);
+        assert.equal(b.count("T2"), 1);
+        assert.deepEqual(
+            b.read("T1").messages.map((x) => x.msgId),
+            ["1", "2"],
+        );
+    });
+
+    it("duplicates are not written twice and a torn last line is skipped", () => {
+        const file = tmpFile();
+        const now = Date.now();
+        const a = new HistoryStore(2000, { filePath: file });
+        a.ingest("T1", [m("1", now)]);
+        a.ingest("T1", [m("1", now)]);
+        assert.equal(readFileSync(file, "utf8").trim().split("\n").length, 1);
+        appendFileSync(file, '{"msgId":"2","threadId":"T1","tim');
+        const b = new HistoryStore(2000, { filePath: file });
+        assert.equal(b.count("T1"), 1);
+    });
+
+    it("messages older than keepDays are dropped on load and on compaction", () => {
+        const file = tmpFile();
+        const day = 86400000;
+        let t = Date.now();
+        const now = () => t;
+        const a = new HistoryStore(2000, { filePath: file, keepDays: 30, now });
+        a.ingest("T1", [m("old", t - 40 * day), m("new", t - day)]);
+        const b = new HistoryStore(2000, { filePath: file, keepDays: 30, now });
+        assert.deepEqual(
+            b.read("T1").messages.map((x) => x.msgId),
+            ["new"],
+        );
+        b.compact();
+        assert.equal(readFileSync(file, "utf8").trim().split("\n").length, 1);
+        t += 31 * day;
+        b.compact();
+        assert.equal(b.count("T1"), 0);
+        assert.equal(readFileSync(file, "utf8"), "");
+    });
+
+    it("without a file it stays in memory only", () => {
+        const store = new HistoryStore(2000);
+        store.ingest("T1", [m("1", 100)]);
+        assert.equal(store.count("T1"), 1);
     });
 });
