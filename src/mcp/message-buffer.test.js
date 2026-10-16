@@ -306,3 +306,15 @@ describe("MessageBuffer edge cases", () => {
         assert.equal(buf._globalCursor, 2);
     });
 });
+
+describe("MessageBuffer.has (1.5.0)", () => {
+    it("finds a buffered message by id, per thread", () => {
+        const buf = new MessageBuffer(500, 2 * 60 * 60 * 1000);
+        buf.push("T1", { id: "42", threadId: "T1", timestamp: Date.now(), text: "x" });
+        assert.equal(buf.has("T1", "42"), true);
+        assert.equal(buf.has("T1", 42), true);
+        assert.equal(buf.has("T2", "42"), false);
+        assert.equal(buf.has("T1", "43"), false);
+        assert.equal(buf.has("T1", null), false);
+    });
+});

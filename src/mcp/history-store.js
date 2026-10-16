@@ -7,16 +7,100 @@
  *
  * Messages are kept sorted oldest→newest, deduped by msgId, and capped per thread.
  * Timestamps are the real Zalo `ts` (not receive time), so pagination is chronological.
+ * Since 1.5.0 it is also kept on disk (JSONL in the session folder) so a restart does not wipe it.
  */
+
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
+/** Days of history kept on disk (Zalo's own replay reaches about two weeks back). */
+export const DEFAULT_KEEP_DAYS = 30;
 
 export class HistoryStore {
     /**
      * @param {number} maxPerThread - Max messages retained per thread (oldest evicted first)
+     * @param {object} [opts]
+     * @param {string|null} [opts.filePath] - JSONL file to keep history across restarts (1.5.0). Without it the
+     *   store lived in memory only, so every restart of the MCP server (a Javis update, a crash) wiped it and only
+     *   Zalo's short replay came back: a reply that arrived before the restart and fell outside the replay was gone
+     *   from every read tool. null keeps the old in-memory behaviour (tests).
+     * @param {number} [opts.keepDays] - Drop messages older than this when loading or compacting
+     * @param {() => number} [opts.now] - clock, for tests
      */
-    constructor(maxPerThread = 2000) {
+    constructor(maxPerThread = 2000, { filePath = null, keepDays = DEFAULT_KEEP_DAYS, now = () => Date.now() } = {}) {
         /** @type {Map<string, Array>} threadId → messages sorted ascending by timestamp */
         this._threads = new Map();
         this._maxPerThread = maxPerThread;
+        this._filePath = filePath;
+        this._keepMs = Math.max(1, keepDays) * 86400000;
+        this._now = now;
+        this._lines = 0; // lines in the file, for compaction
+        this._persist = false;
+        this._load();
+        this._persist = !!filePath;
+    }
+
+    /** Read the JSONL file back into memory (newest per thread, within keepDays). */
+    _load() {
+        if (!this._filePath || !existsSync(this._filePath)) return;
+        const cutoff = this._now() - this._keepMs;
+        const byThread = new Map();
+        try {
+            for (const line of readFileSync(this._filePath, "utf8").split("\n")) {
+                if (!line.trim()) continue;
+                this._lines++;
+                try {
+                    const m = JSON.parse(line);
+                    if (!m || !m.threadId || m.msgId === null || m.msgId === undefined) continue;
+                    if ((m.timestamp || 0) < cutoff) continue;
+                    if (!byThread.has(m.threadId)) byThread.set(m.threadId, []);
+                    byThread.get(m.threadId).push(m);
+                } catch {
+                    // A torn last line (killed mid-write) is skipped, the rest still loads
+                }
+            }
+        } catch (e) {
+            console.error(`[history-store] Could not read ${this._filePath}: ${e.message}`);
+            return;
+        }
+        for (const [tid, msgs] of byThread) this.ingest(tid, msgs);
+    }
+
+    /** Append newly stored messages; rewrite the file when it has grown well past what is kept. */
+    _append(messages) {
+        if (!this._persist || messages.length === 0) return;
+        try {
+            mkdirSync(dirname(this._filePath), { recursive: true });
+            appendFileSync(this._filePath, messages.map((m) => JSON.stringify(m)).join("\n") + "\n");
+            this._lines += messages.length;
+            if (this._lines > Math.max(10000, this.size() * 2)) this.compact();
+        } catch (e) {
+            console.error(`[history-store] Could not write ${this._filePath}: ${e.message}`);
+        }
+    }
+
+    /** Rewrite the file with exactly what is kept now (drops duplicates, evicted and expired lines). */
+    compact() {
+        if (!this._filePath) return;
+        const cutoff = this._now() - this._keepMs;
+        const lines = [];
+        for (const [tid, list] of this._threads) {
+            const kept = list.filter((m) => (m.timestamp || 0) >= cutoff);
+            if (kept.length !== list.length) {
+                if (kept.length) this._threads.set(tid, kept);
+                else this._threads.delete(tid);
+            }
+            for (const m of kept) lines.push(JSON.stringify(m));
+        }
+        try {
+            mkdirSync(dirname(this._filePath), { recursive: true });
+            const tmp = `${this._filePath}.tmp`;
+            writeFileSync(tmp, lines.length ? lines.join("\n") + "\n" : "");
+            renameSync(tmp, this._filePath);
+            this._lines = lines.length;
+        } catch (e) {
+            console.error(`[history-store] Could not compact ${this._filePath}: ${e.message}`);
+        }
     }
 
     /**
@@ -36,21 +120,23 @@ export class HistoryStore {
         }
 
         const seen = new Set(list.map((m) => String(m.msgId)));
-        let added = 0;
+        const fresh = [];
         for (const m of messages) {
             if (!m || m.msgId === null || m.msgId === undefined) continue;
             const id = String(m.msgId);
             if (seen.has(id)) continue;
             seen.add(id);
             list.push(m);
-            added++;
+            fresh.push(m);
         }
+        const added = fresh.length;
 
         if (added > 0) {
             list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
             if (list.length > this._maxPerThread) {
                 this._threads.set(threadId, list.slice(list.length - this._maxPerThread));
             }
+            this._append(fresh);
         }
         return added;
     }

@@ -66,10 +66,20 @@ Group joins are recorded with their exact time while the server is connected and
 `~/.zalo-agent-cli/group-joins.jsonl`. Zalo's member list has no join date, so members who joined
 earlier, or while the server was offline, are not in it.
 
+The three read tools serve messages this server captured itself: live over the connection, plus
+Zalo's replay of recent messages each time it connects. There is no API to ask Zalo for a DM's
+history later, so a message that arrives while the server is down (a restart, an update, another
+Zalo Web session holding the connection) is only seen if that replay brings it back. Each read
+result therefore carries `sync`: `complete: false` lists the outages the replay did not cover, and
+a caller must not conclude from it that a contact did not reply. Messages recovered by the replay
+also go to the live feed, flagged `recovered: true`. History is kept in
+`~/.zalo-agent-cli/history.jsonl` (30 days) and the outages in `~/.zalo-agent-cli/sync-state.json`,
+so a restart neither wipes history nor goes unnoticed.
+
 ## Where data lives
 
 Sessions and settings stay on your machine under `~/.zalo-agent-cli/` (accounts, credentials,
-MCP config, downloaded media). Zalo Official Account credentials live in `~/.zalo-agent/`. The
+MCP config, downloaded media, captured message history). Zalo Official Account credentials live in `~/.zalo-agent/`. The
 folder names are kept from earlier builds so accounts that are already signed in stay signed in.
 
 Nothing is sent anywhere except Zalo itself, a webhook or proxy you configure, and `qr.sepay.vn`

@@ -34,6 +34,19 @@ export class MessageBuffer {
     }
 
     /**
+     * Whether a thread already holds a message with this id (used before feeding replayed messages).
+     * @param {string} threadId
+     * @param {string|number} id
+     * @returns {boolean}
+     */
+    has(threadId, id) {
+        const thread = this._threads.get(threadId);
+        if (!thread || id === null || id === undefined) return false;
+        const key = String(id);
+        return thread.messages.some((m) => String(m.id) === key);
+    }
+
+    /**
      * Read messages from a thread, optionally since a cursor.
      * @param {string} [threadId] - If omitted, reads from all threads
      * @param {number} [since=0] - Cursor to read from (exclusive)
