@@ -81,7 +81,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
             title: "Get Zalo Messages",
             description:
                 "Get messages from Zalo threads (DMs and groups). Returns buffered messages since last read. Use 'since' cursor from previous response for incremental polling. Messages sent from this account (by hand on a phone, or by you) carry isSelf: true; do not answer them as if a contact wrote them. Messages that arrived while the connection was down and came back with Zalo's replay carry recovered: true." +
-                " Every result carries `sync`: if `sync.complete` is false, the connection was down during part of the period and a message from then may be missing here, so do not conclude the contact did not reply.",
+                " Every result carries `sync`: if `sync.complete` is false, the connection was down during part of the period and a message from then may be missing here, so do not conclude the contact did not reply (or approved): keep any step that waits on a reply on hold and tell the owner.",
             inputSchema: z.object({
                 threadId: z.string().optional().describe("Thread ID to read from. Omit for all watched threads."),
                 since: z.number().int().min(0).default(0).describe("Cursor from previous read for incremental polling"),
@@ -283,7 +283,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 "Optional filters: 'senderId' (one person), 'since'/'until' (date range). " +
                 "To page further back in time, pass the previous response's 'cursor' value as 'lastMsgId'. " +
                 "Note: deep/old archives beyond Zalo's replay window are not retrievable via any API." +
-                " Every result carries `sync`: if `sync.complete` is false, the connection was down during part of the period and a message from then may be missing here, so do not conclude the contact did not reply.",
+                " Every result carries `sync`: if `sync.complete` is false, the connection was down during part of the period and a message from then may be missing here, so do not conclude the contact did not reply (or approved): keep any step that waits on a reply on hold and tell the owner.",
             inputSchema: z.object({
                 threadId: z.string().describe("Thread ID to fetch history from"),
                 threadType: z
@@ -365,7 +365,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 "'everything between two dates'. Returns messages oldest→newest with 'replyTo' and 'mentions'. " +
                 "Provide at least one of senderId / since / until (or a threadId) to narrow the search. " +
                 "Same coverage limit as zalo_get_history (~2-week replay window + live since server start)." +
-                " Every result carries `sync`: if `sync.complete` is false, the connection was down during part of the period and a message from then may be missing here, so do not conclude the contact did not reply.",
+                " Every result carries `sync`: if `sync.complete` is false, the connection was down during part of the period and a message from then may be missing here, so do not conclude the contact did not reply (or approved): keep any step that waits on a reply on hold and tell the owner.",
             inputSchema: z.object({
                 senderId: z.string().optional().nullable().describe("Only messages sent by this user id"),
                 threadId: z
