@@ -2,6 +2,16 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.6.0] - 2026-10-22
+
+### Added
+- `zalo_get_labels`: the labels (tags) the owner put on chats in the Zalo app, such as Family,
+  Friends or Customer. With `threadId` it returns only that chat's labels; without, every label with
+  the chats it holds (`threadId`, `threadType`). Zalo stores a group as "g" + group id, which the tool
+  turns back into the plain group id the other tools use. The list is cached for a minute (`refresh:
+  true` asks again), so Javis can check a chat's labels on every incoming message without calling
+  Zalo each time. Javis uses it so a bot can stay out of chats tagged as family or friends.
+
 ## [1.5.0] - 2026-10-16
 
 ### Fixed

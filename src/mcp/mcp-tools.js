@@ -1,14 +1,15 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 12 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * Registers 13 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
  * zalo_send_file, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media, zalo_get_group_joins,
- * zalo_list_join_requests, zalo_review_join_requests.
+ * zalo_list_join_requests, zalo_review_join_requests, zalo_get_labels.
  */
 
 import { z } from "zod";
 import { downloadMedia, openFile } from "./media-downloader.js";
 import { parseTimeBoundary } from "./history-store.js";
 import { ADMIN_HINT, pendingFromApi, reviewOutcomes } from "./join-requests.js";
+import { createLabelReader, labelsOfThread } from "./labels.js";
 import { MAX_FILES_PER_SEND, sendFileFromOutbox } from "./send-file.js";
 import { OUTBOX_DIR } from "../core/send-files.js";
 import { getApi, isLoggedIn } from "../core/zalo-client.js";
@@ -546,6 +547,36 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
             } catch (e) {
                 console.error("[mcp-tools] zalo_review_join_requests error:", e.message);
                 return err(`${e.message}. ${ADMIN_HINT}`);
+            }
+        },
+    );
+
+    // --- zalo_get_labels ---
+    const readLabels = createLabelReader(api);
+    server.registerTool(
+        "zalo_get_labels",
+        {
+            title: "Get Zalo Chat Labels",
+            description:
+                "The labels (tags) the owner put on chats in the Zalo app, e.g. Family, Friends, Customer. " +
+                "With threadId: only the labels that chat carries (empty when none). Without: every label with " +
+                "the chats it holds (threadId plus threadType, 0=DM(User), 1=Group). The list is cached for a " +
+                "minute; pass refresh: true right after the owner changed labels.",
+            inputSchema: z.object({
+                threadId: z.string().optional().describe("Thread ID to get the labels of. Omit for every label."),
+                refresh: z.boolean().default(false).describe("Ask Zalo again instead of the one-minute cache"),
+            }),
+        },
+        async ({ threadId, refresh }) => {
+            try {
+                const { labels, version, cached } = await readLabels({ refresh });
+                if (threadId) {
+                    return ok({ threadId, labels: labelsOfThread(labels, threadId), version, cached });
+                }
+                return ok({ count: labels.length, labels, version, cached });
+            } catch (e) {
+                console.error("[mcp-tools] zalo_get_labels error:", e.message);
+                return err(e.message);
             }
         },
     );
