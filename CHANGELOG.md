@@ -2,6 +2,16 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.6.1] - 2026-10-22
+
+### Fixed
+- Sending after a reconnect goes through the live session. When the connection drops, the MCP
+  server logs in again and moves the listener to a new API instance, but `zalo_send_message`,
+  `zalo_list_join_requests`, `zalo_review_join_requests` and `zalo_get_labels` kept calling the
+  instance captured at startup, which belongs to the dropped session (Javis report, 22/10/2026:
+  bot replies in the history that never reached the customer, on an account that kept
+  reconnecting). They now call the current instance, as `zalo_send_file` already did.
+
 ## [1.6.0] - 2026-10-22
 
 ### Added

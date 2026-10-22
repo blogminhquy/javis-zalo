@@ -135,6 +135,15 @@ function setSession(api, ownId) {
     _ownId = ownId;
 }
 
+/**
+ * Tests only: put an API instance in place as if a (re-)login had just happened.
+ * @param {object|null} api
+ * @param {string|null} [ownId]
+ */
+export function __setSessionForTests(api, ownId = null) {
+    setSession(api, ownId);
+}
+
 /** Clear current session. */
 export function clearSession() {
     _api = null;
