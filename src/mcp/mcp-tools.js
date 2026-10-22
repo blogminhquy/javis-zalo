@@ -67,6 +67,14 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
     const maxPerPoll = config.limits?.maxMessagesPerPoll ?? 20;
 
     /**
+     * The API instance to call now. After a reconnect the server logs in again and the listener moves
+     * to a NEW instance (src/commands/mcp.js); the one passed in here belongs to the dropped session,
+     * so a tool that kept calling it could report success for a message Zalo never delivered (Javis
+     * report, 22/10/2026: replies in the bot's history that never reached the customer).
+     */
+    const live = () => (isLoggedIn() ? getApi() : api);
+
+    /**
      * Coverage of a read (1.5.0): whether every message of the period could be here. Omitted when the
      * server runs without a sync log (tests, old wiring).
      * @param {number|null} from - window start (ms)
@@ -128,7 +136,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
         },
         async ({ threadId, text, threadType }) => {
             try {
-                const result = await api.sendMessage(text, threadId, Number(threadType));
+                const result = await live().sendMessage(text, threadId, Number(threadType));
                 const messageId = result?.message?.msgId ?? result?.msgId ?? null;
                 return ok({ success: true, messageId });
             } catch (e) {
@@ -169,8 +177,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
             try {
                 // After a re-login the listener lives on a new API instance; its context gets the
                 // upload confirmations, so send from that one rather than the one captured here.
-                const live = isLoggedIn() ? getApi() : api;
-                return ok(await sendFileFromOutbox(live, args));
+                return ok(await sendFileFromOutbox(live(), args));
             } catch (e) {
                 console.error("[mcp-tools] zalo_send_file error:", e.message);
                 return err(e.message);
@@ -498,7 +505,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
         },
         async ({ threadId }) => {
             try {
-                const { time, requests } = pendingFromApi(await api.getPendingGroupMembers(threadId));
+                const { time, requests } = pendingFromApi(await live().getPendingGroupMembers(threadId));
                 return ok({
                     threadId,
                     groupName: nameCache?.get(threadId)?.name || null,
@@ -533,7 +540,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
             try {
                 const ids = [...new Set(userIds.map((u) => String(u).trim()).filter(Boolean))];
                 if (!ids.length) return err("No userIds given.");
-                const res = await api.reviewPendingMemberRequest(
+                const res = await live().reviewPendingMemberRequest(
                     { members: ids, isApprove: action === "approve" },
                     threadId,
                 );
@@ -552,7 +559,7 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
     );
 
     // --- zalo_get_labels ---
-    const readLabels = createLabelReader(api);
+    const readLabels = createLabelReader({ getLabels: () => live().getLabels() });
     server.registerTool(
         "zalo_get_labels",
         {
