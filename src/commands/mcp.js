@@ -12,6 +12,7 @@ import { GroupJoinLog, joinRecordsFromEvent, joinToBufferMessage } from "../mcp/
 import { joinRequestRecordsFromEvent, joinRequestToBufferMessage, pendingFromApi } from "../mcp/join-requests.js";
 import { MessageBuffer } from "../mcp/message-buffer.js";
 import { HistoryStore } from "../mcp/history-store.js";
+import { ReactionLog, reactionRecords } from "../mcp/reaction-log.js";
 import { HEARTBEAT_MS, SyncLog } from "../mcp/sync-log.js";
 import { reconnectDelay } from "../mcp/reconnect.js";
 import { ThreadFilter } from "../mcp/thread-filter.js";
@@ -70,6 +71,10 @@ export function registerMCPCommands(program) {
                 filePath: join(CONFIG_DIR, "history.jsonl"),
                 keepDays: config.limits?.historyKeepDays ?? 30,
             });
+            // Reactions (hearts...) on messages. History messages carry none, so they live in their own log.
+            // Hung on historyStore so the tool wiring (stdio + HTTP) needs no new parameter.
+            const reactionLog = new ReactionLog(join(CONFIG_DIR, "reactions.jsonl"));
+            historyStore.reactionLog = reactionLog;
             // When the live connection was down, so a read can say "may be incomplete" (1.5.0).
             const syncLog = new SyncLog(join(CONFIG_DIR, "sync-state.json"));
             const backfillPages = config.limits?.historyBackfillPages ?? 5;
@@ -237,6 +242,52 @@ export function registerMCPCommands(program) {
             }
 
             /**
+             * Replay recent reactions (cmd 610 DM / 611 group) during the sync window and log them.
+             * The cursor is the last actionId of a page. Zalo pages reactions OLDEST first (about 50 per page),
+             * so the cap must be high enough to walk forward to today.
+             */
+            async function backfillReactions(api, threadType, gen) {
+                let cursor = null;
+                let added = 0;
+                const maxPages = config.limits?.reactionBackfillPages ?? 60;
+                for (let page = 0; page < maxPages; page++) {
+                    if (gen !== backfillGeneration) return added;
+                    const batch = await new Promise((resolve) => {
+                        const handler = (reactions, isGroup) => {
+                            if (!!isGroup !== (threadType === 1)) return;
+                            clearTimeout(timer);
+                            api.listener.removeListener("old_reactions", handler);
+                            resolve(Array.isArray(reactions) ? reactions : []);
+                        };
+                        const timer = setTimeout(() => {
+                            api.listener.removeListener("old_reactions", handler);
+                            resolve(null);
+                        }, backfillPageTimeout);
+                        api.listener.on("old_reactions", handler);
+                        try {
+                            api.listener.requestOldReactions(threadType, cursor);
+                        } catch {
+                            clearTimeout(timer);
+                            api.listener.removeListener("old_reactions", handler);
+                            resolve(null);
+                        }
+                    });
+                    if (!batch || batch.length === 0) break;
+                    for (const r of batch) {
+                        try {
+                            added += reactionLog.add(reactionRecords(r));
+                        } catch {
+                            // one bad record must not stop the replay
+                        }
+                    }
+                    const nextId = batch[batch.length - 1]?.data?.actionId;
+                    if (!nextId || String(nextId) === String(cursor)) break;
+                    cursor = nextId;
+                }
+                return added;
+            }
+
+            /**
              * Seed the history store from the backfill right after (re)connect.
              *
              * Each connect supersedes any older in-flight backfill (which may still be looping
@@ -254,6 +305,13 @@ export function registerMCPCommands(program) {
                     const group = await backfillHistory(api, 1, gen);
                     if (gen !== backfillGeneration || !dm || !group) return;
                     syncLog.onBackfill({ dm, group });
+                    try {
+                        const rg = await backfillReactions(api, 1, gen);
+                        const rd = await backfillReactions(api, 0, gen);
+                        console.error(`[mcp] Reaction backfill: ${rg} group + ${rd} DM reaction(s)`);
+                    } catch (e) {
+                        console.error("[mcp] Reaction backfill failed (non-fatal):", e.message);
+                    }
                     const recovered = gap ? feedRecovered([...dm.raws, ...group.raws], gap.from) : 0;
                     console.error(
                         `[mcp] History backfill: ${dm.ingested} DM + ${group.ingested} group message(s) across ` +
@@ -334,6 +392,14 @@ export function registerMCPCommands(program) {
                     // Nobody needs a notification about a message this account sent.
                     if (!normalized.isSelf) notifier.onMessage(normalized);
                     console.error(`[mcp] Buffered ${normalized.threadType} msg from ${normalized.threadId}`);
+                });
+
+                api.listener.on("reaction", (reaction) => {
+                    try {
+                        reactionLog.add(reactionRecords(reaction));
+                    } catch {
+                        // Non-fatal, like history ingest
+                    }
                 });
 
                 api.listener.on("group_event", (event) => {
