@@ -17,6 +17,7 @@ import { reconnectDelay } from "../mcp/reconnect.js";
 import { ThreadFilter } from "../mcp/thread-filter.js";
 import { loadMCPConfig, parseDuration } from "../mcp/mcp-config.js";
 import { normalizeMessage, toHistoryMessage } from "../mcp/message-normalize.js";
+import { normalizeReaction } from "../mcp/reactions.js";
 import { createMCPServer } from "../mcp/mcp-server.js";
 import { registerTools } from "../mcp/mcp-tools.js";
 import { createHTTPServer } from "../mcp/mcp-http-transport.js";
@@ -334,6 +335,25 @@ export function registerMCPCommands(program) {
                     // Nobody needs a notification about a message this account sent.
                     if (!normalized.isSelf) notifier.onMessage(normalized);
                     console.error(`[mcp] Buffered ${normalized.threadType} msg from ${normalized.threadId}`);
+                });
+
+                // Emoji reactions (1.7.0) arrive as their own event, not as a message. They go to the live buffer as
+                // `type: "reaction"` entries pointing at the message they were put on, so a consumer can show that a
+                // customer hearted a quote and decide for itself whether that needs a reply. No owner notification:
+                // a reaction alone is not worth pinging anyone about.
+                api.listener.on("reaction", (reaction) => {
+                    if (reaction?.isSelf && opts.self === false) return;
+                    let entry = null;
+                    try {
+                        entry = normalizeReaction(reaction);
+                    } catch (e) {
+                        console.error("[mcp] reaction parse failed:", e.message);
+                        return;
+                    }
+                    if (!entry || !entry.threadId) return;
+                    if (!filter.shouldWatch(entry.threadId, entry.threadType)) return;
+                    buffer.push(entry.threadId, entry);
+                    console.error(`[mcp] Buffered reaction in ${entry.threadType} ${entry.threadId}`);
                 });
 
                 api.listener.on("group_event", (event) => {

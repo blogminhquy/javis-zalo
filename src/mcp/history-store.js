@@ -207,6 +207,19 @@ export class HistoryStore {
         return { messages: page.map((m) => ({ ...m })), cursor, hasMore };
     }
 
+    /**
+     * The stored message with this msgId in a thread, or null (zalo_add_reaction looks up its cliMsgId here).
+     * @param {string} threadId
+     * @param {string|number} msgId
+     * @returns {object|null}
+     */
+    find(threadId, msgId) {
+        const list = this._threads.get(threadId);
+        if (!list || msgId === null || msgId === undefined) return null;
+        const key = String(msgId);
+        return list.find((m) => String(m.msgId) === key) || null;
+    }
+
     /** Number of messages stored for a thread. */
     count(threadId) {
         return (this._threads.get(threadId) || []).length;
