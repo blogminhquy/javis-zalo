@@ -68,6 +68,8 @@ export function normalizeMessage(msg, timestamp = Date.now()) {
     const { isText, text, type } = resolveContent(rawContent, msg.data.msgType);
     return {
         id: msg.data.msgId,
+        // Zalo's client-side id of the same message. Reacting to it needs both ids (zalo_add_reaction).
+        cliMsgId: msg.data.cliMsgId !== null && msg.data.cliMsgId !== undefined ? String(msg.data.cliMsgId) : null,
         threadId: msg.threadId,
         threadType: threadTypeLabel(msg.type),
         senderId: msg.data.uidFrom || null,
@@ -102,6 +104,7 @@ export function toHistoryMessage(msg, fallbackTs = Date.now()) {
     const { text, type } = resolveContent(msg.data?.content, msg.data?.msgType);
     return {
         msgId: msg.data?.msgId,
+        cliMsgId: msg.data?.cliMsgId !== null && msg.data?.cliMsgId !== undefined ? String(msg.data.cliMsgId) : null,
         threadId: msg.threadId,
         threadType: threadTypeLabel(msg.type),
         senderId: msg.data?.uidFrom || null,

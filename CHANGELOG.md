@@ -2,6 +2,19 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.7.0] - 2026-10-26
+
+### Added
+- Emoji reactions, both ways. A reaction a contact puts on a message now reaches `zalo_get_messages`
+  as an entry with `type: "reaction"` pointing at the message it was put on (`reaction.targetMsgId`),
+  with its name, emoji and whether it was taken back (`reaction.removed`). Before, the server did not
+  listen to Zalo's reaction event at all, so a consumer never knew a customer had hearted a quote.
+  Reactions do not trigger the owner notification.
+- `zalo_add_reaction`: put a reaction on a message (heart, like, haha, wow, cry, angry and the rest of
+  Zalo's picker, by name or by the emoji itself), or take this account's reaction off with `none`.
+- `cliMsgId` on every message in `zalo_get_messages` and the history tools. Zalo needs it next to
+  `msgId` to react; `zalo_add_reaction` looks it up from the buffer or history when it is not passed.
+
 ## [1.6.1] - 2026-10-22
 
 ### Fixed

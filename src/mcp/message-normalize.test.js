@@ -123,6 +123,14 @@ describe("toHistoryMessage (history shape)", () => {
         assert.deepEqual(out.mentions, ["u2"]);
     });
 
+    it("keeps Zalo's cliMsgId on both shapes (reacting needs it), null when absent", () => {
+        const msg = fakeMsg({ cliMsgId: 4242 });
+        assert.equal(normalizeMessage(msg, 1).cliMsgId, "4242");
+        assert.equal(toHistoryMessage(msg).cliMsgId, "4242");
+        assert.equal(normalizeMessage(fakeMsg(), 1).cliMsgId, null);
+        assert.equal(toHistoryMessage(fakeMsg()).cliMsgId, null);
+    });
+
     it("falls back to the provided timestamp when ts is absent", () => {
         const msg = fakeMsg();
         delete msg.data.ts;

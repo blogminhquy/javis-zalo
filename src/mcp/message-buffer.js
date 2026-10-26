@@ -47,6 +47,19 @@ export class MessageBuffer {
     }
 
     /**
+     * The buffered message with this id in a thread, or null (zalo_add_reaction looks up its cliMsgId here).
+     * @param {string} threadId
+     * @param {string|number} id
+     * @returns {object|null}
+     */
+    find(threadId, id) {
+        const thread = this._threads.get(threadId);
+        if (!thread || id === null || id === undefined) return null;
+        const key = String(id);
+        return thread.messages.find((m) => String(m.id) === key) || null;
+    }
+
+    /**
      * Read messages from a thread, optionally since a cursor.
      * @param {string} [threadId] - If omitted, reads from all threads
      * @param {number} [since=0] - Cursor to read from (exclusive)
