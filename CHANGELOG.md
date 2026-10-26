@@ -2,6 +2,17 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.7.0] - 2026-10-26
+
+### Added
+- `zalo_get_reactions`: who reacted (heart, like...) to which message of a thread, optionally only
+  some `msgIds` or since a time. History messages carry no reaction, so the MCP server now records
+  every reaction pushed live and, after each connect, replays the recent ones Zalo keeps
+  (`requestOldReactions`, up to `reactionBackfillPages` pages, default 60). They are kept in
+  `~/.zalo-agent-cli/reactions.jsonl`; the latest record per person and message wins, an empty icon
+  means removed. Javis uses it to tell which order slips in a group are done: the workshop hearts
+  a slip once it is made (Javis report, 26/10/2026).
+
 ## [1.6.1] - 2026-10-22
 
 ### Fixed

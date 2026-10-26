@@ -1,8 +1,8 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 13 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * Registers 14 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
  * zalo_send_file, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media, zalo_get_group_joins,
- * zalo_list_join_requests, zalo_review_join_requests, zalo_get_labels.
+ * zalo_list_join_requests, zalo_review_join_requests, zalo_get_labels, zalo_get_reactions.
  */
 
 import { z } from "zod";
@@ -111,6 +111,36 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 return ok(result);
             } catch (e) {
                 console.error("[mcp-tools] zalo_get_messages error:", e.message);
+                return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_get_reactions ---
+    server.registerTool(
+        "zalo_get_reactions",
+        {
+            title: "Get Zalo Reactions",
+            description:
+                "Who reacted (heart, like...) to which message of a thread. Recorded live and from Zalo's replay at each connect, so reactions made while nothing was recording may be missing. icon '/-heart' = heart, '/-strong' = like. Match msgId with zalo_get_history messages.",
+            inputSchema: z.object({
+                threadId: z.string().describe("Thread ID (group or DM)"),
+                msgIds: z.array(z.string()).optional().nullable().describe("Only these message ids"),
+                since: z
+                    .union([z.string(), z.number()])
+                    .optional()
+                    .nullable()
+                    .describe("Only reactions at/after this time - 'YYYY-MM-DD', ISO datetime, or epoch ms"),
+            }),
+        },
+        async ({ threadId, msgIds, since }) => {
+            try {
+                const log = historyStore?.reactionLog;
+                if (!log) return err("Reaction log unavailable - restart the MCP server.");
+                const messages = log.query({ threadId, msgIds: msgIds || null, since: parseTimeBoundary(since) });
+                return ok({ threadId, count: messages.length, messages, sync: syncOf(null, null) });
+            } catch (e) {
+                console.error("[mcp-tools] zalo_get_reactions error:", e.message);
                 return err(e.message);
             }
         },
