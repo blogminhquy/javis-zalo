@@ -6,6 +6,7 @@
 import { resolve } from "path";
 import { getApi } from "../core/zalo-client.js";
 import { success, error, info, output } from "../utils/output.js";
+import { describeItem, editNote, listBoard, pinActFrom, PIN_ACT } from "../core/group-notes.js";
 
 export function registerGroupCommands(program) {
     const group = program.command("group").description("Manage groups");
@@ -513,14 +514,41 @@ export function registerGroupCommands(program) {
 
     group
         .command("note-edit <groupId> <noteId> <title>")
-        .description("Edit an existing note in a group")
+        .description("Edit an existing note in a group (its pin stays as it is unless --pin or --unpin)")
         .option("--pin", "Pin the note")
+        .option("--unpin", "Take the note off the pin bar")
         .action(async (groupId, noteId, title, opts) => {
             try {
-                const result = await getApi().editNote({ title, topicId: noteId, pinAct: opts.pin || false }, groupId);
-                output(result, program.opts().json, () => success(`Note ${noteId} updated`));
+                const pinAct = pinActFrom(opts);
+                const result = await editNote(getApi(), groupId, noteId, title, pinAct);
+                const how = pinAct === PIN_ACT.pin ? ", pinned" : pinAct === PIN_ACT.unpin ? ", unpinned" : "";
+                output(result, program.opts().json, () => success(`Note ${noteId} updated${how}`));
             } catch (e) {
                 error(`Edit note failed: ${e.message}`);
+            }
+        });
+
+    group
+        .command("note-list <groupId>")
+        .description("List a group's board: notes, pinned messages and polls")
+        .option("-t, --type <type>", "note, pin, poll or all", "all")
+        .option("-c, --count <n>", "Items per page asked from Zalo", (v) => parseInt(v, 10), 20)
+        .option("--max-pages <n>", "Stop after this many pages", (v) => parseInt(v, 10), 10)
+        .action(async (groupId, opts) => {
+            try {
+                const res = await listBoard(getApi(), groupId, {
+                    type: opts.type,
+                    count: opts.count,
+                    maxPages: opts.maxPages,
+                });
+                const result = { groupId, type: opts.type, ...res };
+                output(result, program.opts().json, () => {
+                    info(`${res.items.length} item(s) on the board of group ${groupId}`);
+                    for (const rec of res.items) console.log("  " + describeItem(rec));
+                    if (res.truncated) info("(stopped at --max-pages; there may be more)");
+                });
+            } catch (e) {
+                error(`List notes failed: ${e.message}`);
             }
         });
 
