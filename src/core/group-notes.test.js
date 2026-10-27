@@ -40,8 +40,12 @@ describe("pinActFrom", () => {
         assert.equal(pinActFrom({ pin: true }), PIN_ACT.pin);
         assert.equal(pinActFrom({ unpin: true }), PIN_ACT.unpin);
     });
-    it("refuses both at once", () => {
-        assert.throws(() => pinActFrom({ pin: true, unpin: true }), /not both/);
+    it("--keep-pin is the default said out loud", () => {
+        assert.equal(pinActFrom({ keepPin: true }), PIN_ACT.keep);
+    });
+    it("refuses two at once", () => {
+        assert.throws(() => pinActFrom({ pin: true, unpin: true }), /one of/);
+        assert.throws(() => pinActFrom({ pin: true, keepPin: true }), /one of/);
     });
     it("uses Zalo's action codes: 0 none, 1 pin, 2 unpin", () => {
         assert.deepEqual({ ...PIN_ACT }, { keep: 0, pin: 1, unpin: 2 });

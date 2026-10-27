@@ -9,7 +9,9 @@ All notable changes to javis-zalo. Newest first.
   item's id, text, who created and last edited it, and when. `--type note|pin|poll|all`, `--json`.
   It walks every page and stops on its own if Zalo hands the same page back. Zalo's board list does
   not say whether a note is pinned, so a note's `pinned` is `null`; a pinned message is pinned.
-- `group note-edit --unpin` takes a note off the pin bar.
+- `group note-edit --unpin` takes a note off the pin bar, and `--keep-pin` states the default
+  (leave the pin alone). A caller that must never unpin by accident can always pass one of the
+  three: older versions reject `--keep-pin` instead of unpinning.
 
 ### Fixed
 - `group note-edit` no longer unpins the note it edits. It went through zca-js `editNote`, which

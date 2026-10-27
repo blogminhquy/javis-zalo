@@ -517,6 +517,7 @@ export function registerGroupCommands(program) {
         .description("Edit an existing note in a group (its pin stays as it is unless --pin or --unpin)")
         .option("--pin", "Pin the note")
         .option("--unpin", "Take the note off the pin bar")
+        .option("--keep-pin", "Leave the pin as it is (the default, said explicitly)")
         .action(async (groupId, noteId, title, opts) => {
             try {
                 const pinAct = pinActFrom(opts);

@@ -31,11 +31,17 @@ export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGES = 10;
 
 /**
- * The pin action for `--pin` / `--unpin` (neither: keep the note as it is).
- * @param {{pin?: boolean, unpin?: boolean}} opts
+ * The pin action for `--pin` / `--unpin` / `--keep-pin` (none: keep the note as it is).
+ *
+ * `--keep-pin` says the default out loud. A caller that must never unpin by accident (the Javis Store plugin) always
+ * passes one of the three: javis-zalo 1.7.0 and older reject `--keep-pin` as an unknown option instead of falling
+ * back to their old "no flag = unpin" behaviour.
+ * @param {{pin?: boolean, unpin?: boolean, keepPin?: boolean}} opts
  */
 export function pinActFrom(opts = {}) {
-    if (opts.pin && opts.unpin) throw new Error("choose --pin or --unpin, not both");
+    if ([opts.pin, opts.unpin, opts.keepPin].filter(Boolean).length > 1) {
+        throw new Error("choose one of --pin, --unpin or --keep-pin");
+    }
     if (opts.pin) return PIN_ACT.pin;
     if (opts.unpin) return PIN_ACT.unpin;
     return PIN_ACT.keep;
