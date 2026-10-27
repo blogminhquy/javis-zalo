@@ -2,6 +2,23 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.8.0] - 2026-10-27
+
+### Added
+- `group note-list <groupId>`: list a group's board (notes, pinned messages and polls) with each
+  item's id, text, who created and last edited it, and when. `--type note|pin|poll|all`, `--json`.
+  It walks every page and stops on its own if Zalo hands the same page back. Zalo's board list does
+  not say whether a note is pinned, so a note's `pinned` is `null`; a pinned message is pinned.
+- `group note-edit --unpin` takes a note off the pin bar, and `--keep-pin` states the default
+  (leave the pin alone). A caller that must never unpin by accident can always pass one of the
+  three: older versions reject `--keep-pin` instead of unpinning.
+
+### Fixed
+- `group note-edit` no longer unpins the note it edits. It went through zca-js `editNote`, which
+  sends pin action 2 (unpin) whenever `--pin` is not given, so fixing a typo in a pinned note took
+  it off the pin bar (Javis report, 27/10/2026). It now sends no pin action unless `--pin` or
+  `--unpin` is given, so the note stays as it was.
+
 ## [1.7.0] - 2026-10-26
 
 ### Added
