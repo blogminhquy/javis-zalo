@@ -2,6 +2,18 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.9.0] - 2026-10-30
+
+### Added
+- `zalo_send_typing`: show the "typing..." indicator in a chat, as a person writing a reply does. It
+  fades after a few seconds; call it again every few seconds while still writing. Javis shows it while
+  its bot writes a private reply (Javis report, 30/10/2026: customers should not be able to tell a bot
+  from a person).
+- `zalo_send_message` takes optional `styles` (`[{ start, len, st }]`, positions in UTF-16 units):
+  bold, italic, underline, strikethrough, red, orange, yellow, green, small, big and list styles, the
+  zca-js TextStyle codes. A style that runs past the end of the text is dropped instead of making Zalo
+  refuse the whole message. Without `styles` the message goes out exactly as before.
+
 ## [1.8.0] - 2026-10-27
 
 ### Added
