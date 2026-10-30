@@ -1,7 +1,7 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 14 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
- * zalo_send_file, zalo_add_reaction, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media,
+ * Registers 15 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * zalo_send_typing, zalo_send_file, zalo_add_reaction, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media,
  * zalo_get_group_joins, zalo_list_join_requests, zalo_review_join_requests, zalo_get_labels.
  */
 
@@ -17,6 +17,26 @@ import { getApi, isLoggedIn } from "../core/zalo-client.js";
 
 /** Thread type constants matching zca-js ThreadType enum */
 const THREAD_USER = 0;
+
+/**
+ * Text style codes zca-js accepts in `sendMessage({ msg, styles })` (TextStyle): bold, italic, underline,
+ * strikethrough, red, orange, yellow, green, small, big, bullet list, numbered list.
+ */
+export const STYLE_CODES = [
+    "b",
+    "i",
+    "u",
+    "s",
+    "c_db342e",
+    "c_f27806",
+    "c_f7b503",
+    "c_15a85f",
+    "f_13",
+    "f_18",
+    "lst_1",
+    "lst_2",
+];
+const MAX_STYLES = 100;
 
 /**
  * Wrap a result object into MCP tool content format.
@@ -122,7 +142,12 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
         "zalo_send_message",
         {
             title: "Send Zalo Message",
-            description: "Send a text message to a Zalo thread (DM or group). threadType: 0=DM(User), 1=Group.",
+            description:
+                "Send a text message to a Zalo thread (DM or group). threadType: 0=DM(User), 1=Group. " +
+                "Optional `styles` format parts of the text: each is { start, len, st } with positions in UTF-16 units " +
+                "(as JavaScript counts) and st one of b (bold), i (italic), u (underline), s (strikethrough), " +
+                "c_db342e (red), c_f27806 (orange), c_f7b503 (yellow), c_15a85f (green), f_13 (small), f_18 (big), " +
+                "lst_1 (bullet list), lst_2 (numbered list).",
             inputSchema: z.object({
                 threadId: z.string().describe("Thread ID to send message to"),
                 text: z.string().min(1).describe("Message text to send"),
@@ -133,15 +158,60 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                     .max(1)
                     .default(THREAD_USER)
                     .describe("Thread type: 0=DM(User), 1=Group"),
+                styles: z
+                    .array(
+                        z.object({
+                            start: z.number().int().min(0),
+                            len: z.number().int().min(1),
+                            st: z.enum(STYLE_CODES),
+                        }),
+                    )
+                    .max(MAX_STYLES)
+                    .optional()
+                    .describe("Text styles: [{ start, len, st }], positions in UTF-16 units"),
             }),
         },
-        async ({ threadId, text, threadType }) => {
+        async ({ threadId, text, threadType, styles }) => {
             try {
-                const result = await live().sendMessage(text, threadId, Number(threadType));
+                // A style past the end of the text is dropped rather than sent: Zalo rejects the whole message.
+                const kept = (styles || []).filter((x) => x.start + x.len <= text.length);
+                const content = kept.length ? { msg: text, styles: kept } : text;
+                const result = await live().sendMessage(content, threadId, Number(threadType));
                 const messageId = result?.message?.msgId ?? result?.msgId ?? null;
                 return ok({ success: true, messageId });
             } catch (e) {
                 console.error("[mcp-tools] zalo_send_message error:", e.message);
+                return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_send_typing ---
+    server.registerTool(
+        "zalo_send_typing",
+        {
+            title: "Show Typing in a Zalo Chat",
+            description:
+                "Show the 'typing...' indicator to the other side of a Zalo thread, as a person writing a reply does. " +
+                "It fades after a few seconds on its own; call again every few seconds while still writing. " +
+                "threadType: 0=DM(User), 1=Group.",
+            inputSchema: z.object({
+                threadId: z.string().describe("Thread ID to show the indicator in"),
+                threadType: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .max(1)
+                    .default(THREAD_USER)
+                    .describe("Thread type: 0=DM(User), 1=Group"),
+            }),
+        },
+        async ({ threadId, threadType }) => {
+            try {
+                await live().sendTypingEvent(threadId, Number(threadType));
+                return ok({ success: true });
+            } catch (e) {
+                console.error("[mcp-tools] zalo_send_typing error:", e.message);
                 return err(e.message);
             }
         },
