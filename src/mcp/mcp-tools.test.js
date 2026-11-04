@@ -78,3 +78,100 @@ describe("zalo_send_typing", () => {
         assert.equal(r.isError, true);
     });
 });
+
+/** Quote-reply (1.11.0): reply to one earlier message so the student sees which one is meant. */
+describe("zalo_send_message replyToMsgId", () => {
+    afterEach(() => clearSession());
+
+    const stored = {
+        msgId: "900",
+        cliMsgId: "55",
+        senderId: "u1",
+        text: "i do anki 30 mins",
+        type: "text",
+        timestamp: 1700000000000,
+    };
+    function withHistory(api, msg) {
+        const handlers = {};
+        const historyStore = { find: (t, id) => (t === "g1" && String(id) === "900" ? msg : null) };
+        registerTools(
+            { registerTool: (name, _spec, fn) => (handlers[name] = fn) },
+            api,
+            {},
+            {},
+            {},
+            null,
+            historyStore,
+            null,
+        );
+        return handlers;
+    }
+
+    it("sends the text with a quote built from the stored message", async () => {
+        const calls = [];
+        const r = await withHistory(fakeApi(calls), stored).zalo_send_message({
+            threadId: "g1",
+            text: "Say: I did Anki for 30 minutes.",
+            threadType: 1,
+            replyToMsgId: "900",
+        });
+        assert.equal(parse(r).messageId, "m1");
+        const sent = calls[0][1];
+        assert.equal(sent.msg, "Say: I did Anki for 30 minutes.");
+        assert.deepEqual(sent.quote, {
+            content: "i do anki 30 mins",
+            msgType: "webchat",
+            propertyExt: undefined,
+            uidFrom: "u1",
+            msgId: "900",
+            cliMsgId: "55",
+            ts: "1700000000000",
+            ttl: 0,
+        });
+    });
+
+    it("keeps styles when quoting", async () => {
+        const calls = [];
+        const styles = [{ start: 0, len: 3, st: "b" }];
+        await withHistory(fakeApi(calls), stored).zalo_send_message({
+            threadId: "g1",
+            text: "Say it",
+            threadType: 1,
+            styles,
+            replyToMsgId: "900",
+        });
+        assert.deepEqual(calls[0][1].styles, styles);
+    });
+
+    it("an unknown message sends nothing and says why", async () => {
+        const calls = [];
+        const r = await withHistory(fakeApi(calls), stored).zalo_send_message({
+            threadId: "g1",
+            text: "x",
+            threadType: 1,
+            replyToMsgId: "404",
+        });
+        assert.equal(r.isError, true);
+        assert.match(r.content[0].text, /cannot be quoted/);
+        assert.deepEqual(calls, []);
+    });
+
+    it("an image message cannot be quoted and nothing is sent", async () => {
+        const calls = [];
+        const r = await withHistory(fakeApi(calls), { ...stored, type: "chat.photo", text: null }).zalo_send_message({
+            threadId: "g1",
+            text: "x",
+            threadType: 1,
+            replyToMsgId: "900",
+        });
+        assert.equal(r.isError, true);
+        assert.match(r.content[0].text, /only text messages/);
+        assert.deepEqual(calls, []);
+    });
+
+    it("without replyToMsgId nothing changes", async () => {
+        const calls = [];
+        await withHistory(fakeApi(calls), stored).zalo_send_message({ threadId: "g1", text: "hi", threadType: 1 });
+        assert.deepEqual(calls, [["send", "hi", "g1", 1]]);
+    });
+});

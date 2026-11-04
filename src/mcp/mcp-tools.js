@@ -12,6 +12,7 @@ import { ADMIN_HINT, pendingFromApi, reviewOutcomes } from "./join-requests.js";
 import { createLabelReader, labelsOfThread } from "./labels.js";
 import { REACTIONS, reactToMessage } from "./reactions.js";
 import { MAX_FILES_PER_SEND, sendFileFromOutbox } from "./send-file.js";
+import { buildQuote } from "./reply-quote.js";
 import { OUTBOX_DIR } from "../core/send-files.js";
 import { getApi, isLoggedIn } from "../core/zalo-client.js";
 
@@ -147,7 +148,9 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 "Optional `styles` format parts of the text: each is { start, len, st } with positions in UTF-16 units " +
                 "(as JavaScript counts) and st one of b (bold), i (italic), u (underline), s (strikethrough), " +
                 "c_db342e (red), c_f27806 (orange), c_f7b503 (yellow), c_15a85f (green), f_13 (small), f_18 (big), " +
-                "lst_1 (bullet list), lst_2 (numbered list).",
+                "lst_1 (bullet list), lst_2 (numbered list). " +
+                "Optional `replyToMsgId` sends it as a reply to that earlier message (Zalo shows the quoted message above it); " +
+                "use the `id` of a TEXT message from zalo_get_messages / zalo_get_history in the same thread.",
             inputSchema: z.object({
                 threadId: z.string().describe("Thread ID to send message to"),
                 text: z.string().min(1).describe("Message text to send"),
@@ -169,13 +172,22 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                     .max(MAX_STYLES)
                     .optional()
                     .describe("Text styles: [{ start, len, st }], positions in UTF-16 units"),
+                replyToMsgId: z
+                    .string()
+                    .optional()
+                    .describe("Id of an earlier text message in this thread to reply to (quote-reply)"),
             }),
         },
-        async ({ threadId, text, threadType, styles }) => {
+        async ({ threadId, text, threadType, styles, replyToMsgId }) => {
             try {
                 // A style past the end of the text is dropped rather than sent: Zalo rejects the whole message.
                 const kept = (styles || []).filter((x) => x.start + x.len <= text.length);
-                const content = kept.length ? { msg: text, styles: kept } : text;
+                let content = kept.length ? { msg: text, styles: kept } : text;
+                if (replyToMsgId) {
+                    // Fails before anything is sent when the message cannot be quoted, so a reply is never sent unquoted by mistake.
+                    const quote = buildQuote(threadId, replyToMsgId, { buffer, historyStore });
+                    content = { ...(typeof content === "string" ? { msg: content } : content), quote };
+                }
                 const result = await live().sendMessage(content, threadId, Number(threadType));
                 const messageId = result?.message?.msgId ?? result?.msgId ?? null;
                 return ok({ success: true, messageId });
