@@ -14,6 +14,7 @@ import { MessageBuffer } from "../mcp/message-buffer.js";
 import { HistoryStore } from "../mcp/history-store.js";
 import { HEARTBEAT_MS, SyncLog } from "../mcp/sync-log.js";
 import { reconnectDelay } from "../mcp/reconnect.js";
+import { guardHandler, listenerErrorLogger, replayFeedFrom } from "../mcp/replay-feed.js";
 import { ThreadFilter } from "../mcp/thread-filter.js";
 import { loadMCPConfig, parseDuration } from "../mcp/mcp-config.js";
 import { normalizeMessage, toHistoryMessage } from "../mcp/message-normalize.js";
@@ -118,6 +119,8 @@ export function registerMCPCommands(program) {
             let shuttingDown = false;
             let backfillGeneration = 0; // bumped each connect; older in-flight backfills bail when superseded
             let lastConnectedAt = 0; // ms timestamp of the last successful connect (0 = not connected)
+            let lastDropAt = null; // ms timestamp of the last socket drop in this process, however short (1.9.1)
+            const logListenerError = listenerErrorLogger(); // zca-js "error" events, rate-limited (1.9.1)
             let rapidCloses = 0; // consecutive closes that happened before the connection was stable
             let warnedMultiSession = false; // one-shot guard for the multi-session warning
 
@@ -250,18 +253,23 @@ export function registerMCPCommands(program) {
             async function primeHistoryOnConnect(api) {
                 const gen = ++backfillGeneration;
                 const gap = syncLog.currentGap();
+                // 1.9.1: every reconnect feeds the live buffer, not only a recorded gap (>= 5 s). See replay-feed.js.
+                const feedFrom = replayFeedFrom({ gapFrom: gap ? gap.from : null, lastDropAt });
                 try {
                     const dm = await backfillHistory(api, 0, gen);
                     const group = await backfillHistory(api, 1, gen);
                     if (gen !== backfillGeneration || !dm || !group) return;
                     syncLog.onBackfill({ dm, group });
-                    const recovered = gap ? feedRecovered([...dm.raws, ...group.raws], gap.from) : 0;
+                    const recovered = feedFrom !== null ? feedRecovered([...dm.raws, ...group.raws], feedFrom) : 0;
                     console.error(
                         `[mcp] History backfill: ${dm.ingested} DM + ${group.ingested} group message(s) across ` +
                             `${historyStore.threadIds().length} thread(s)` +
                             (gap
                                 ? `; outage of ${Math.round((gap.to - gap.from) / 1000)}s ` +
                                   `${gap.recovered ? "covered" : "NOT fully covered"}, ${recovered} message(s) recovered to the live feed`
+                                : "") +
+                            (recovered && !gap
+                                ? `; ${recovered} message(s) from a short drop put into the live feed`
                                 : ""),
                     );
                 } catch (e) {
@@ -300,83 +308,94 @@ export function registerMCPCommands(program) {
              * @param {object} api - zca-js API instance
              */
             function attachListenerHandlers(api) {
-                api.listener.on("message", (msg) => {
-                    // Record into history first (complete view: includes self, real timestamps)
-                    try {
-                        const hm = toHistoryMessage(msg);
-                        if (hm.threadId && hm.msgId) historyStore.ingest(hm.threadId, [hm]);
-                    } catch {
-                        // Non-fatal — history ingest must never break live handling
-                    }
+                // guardHandler (1.9.1): zca-js emits a frame's messages in a loop, so a throw here used to drop the
+                // rest of that frame silently. Now it costs only the message that threw (already in the history).
+                api.listener.on(
+                    "message",
+                    guardHandler("message", (msg) => {
+                        // Record into history first (complete view: includes self, real timestamps)
+                        try {
+                            const hm = toHistoryMessage(msg);
+                            if (hm.threadId && hm.msgId) historyStore.ingest(hm.threadId, [hm]);
+                        } catch {
+                            // Non-fatal: history ingest must never break live handling
+                        }
 
-                    // Own messages (owner or staff typing on a phone, or the agent's own sends) stay in the live
-                    // buffer flagged isSelf: true. Before 1.3.0 they were dropped here, so a consumer never saw a
-                    // reply typed by hand (Javis inbox missed them) while history had them. `--no-self` restores that.
-                    if (msg.isSelf && opts.self === false) return;
+                        // Own messages (owner or staff typing on a phone, or the agent's own sends) stay in the live
+                        // buffer flagged isSelf: true. Before 1.3.0 they were dropped here, so a consumer never saw a
+                        // reply typed by hand (Javis inbox missed them) while history had them. `--no-self` restores that.
+                        if (msg.isSelf && opts.self === false) return;
 
-                    const normalized = normalizeMessage(msg);
+                        const normalized = normalizeMessage(msg);
 
-                    // Apply thread watch filter
-                    if (!filter.shouldWatch(normalized.threadId, normalized.threadType)) return;
+                        // Apply thread watch filter
+                        if (!filter.shouldWatch(normalized.threadId, normalized.threadType)) return;
 
-                    // Apply noise filter (stickers, system msgs, short emoji)
-                    if (!filter.shouldKeep(normalized)) return;
+                        // Apply noise filter (stickers, system msgs, short emoji)
+                        if (!filter.shouldKeep(normalized)) return;
 
-                    // Auto-download media (images, audio, video) in background. Not for our own sends.
-                    if (!normalized.isSelf && normalized.attachment?.url && isDownloadableMedia(normalized.type)) {
-                        const threadName = nameCache?.get(normalized.threadId)?.name || null;
-                        autoDownloadMedia(normalized, {
-                            downloadDir: config.media?.downloadDir || undefined,
-                            threadName,
-                        });
-                    }
+                        // Auto-download media (images, audio, video) in background. Not for our own sends.
+                        if (!normalized.isSelf && normalized.attachment?.url && isDownloadableMedia(normalized.type)) {
+                            const threadName = nameCache?.get(normalized.threadId)?.name || null;
+                            autoDownloadMedia(normalized, {
+                                downloadDir: config.media?.downloadDir || undefined,
+                                threadName,
+                            });
+                        }
 
-                    buffer.push(normalized.threadId, normalized);
-                    // Nobody needs a notification about a message this account sent.
-                    if (!normalized.isSelf) notifier.onMessage(normalized);
-                    console.error(`[mcp] Buffered ${normalized.threadType} msg from ${normalized.threadId}`);
-                });
+                        buffer.push(normalized.threadId, normalized);
+                        // Nobody needs a notification about a message this account sent.
+                        if (!normalized.isSelf) notifier.onMessage(normalized);
+                        console.error(`[mcp] Buffered ${normalized.threadType} msg from ${normalized.threadId}`);
+                    }),
+                );
 
                 // Emoji reactions (1.7.0) arrive as their own event, not as a message. They go to the live buffer as
                 // `type: "reaction"` entries pointing at the message they were put on, so a consumer can show that a
                 // customer hearted a quote and decide for itself whether that needs a reply. No owner notification:
                 // a reaction alone is not worth pinging anyone about.
-                api.listener.on("reaction", (reaction) => {
-                    if (reaction?.isSelf && opts.self === false) return;
-                    let entry = null;
-                    try {
-                        entry = normalizeReaction(reaction);
-                    } catch (e) {
-                        console.error("[mcp] reaction parse failed:", e.message);
-                        return;
-                    }
-                    if (!entry || !entry.threadId) return;
-                    if (!filter.shouldWatch(entry.threadId, entry.threadType)) return;
-                    buffer.push(entry.threadId, entry);
-                    console.error(`[mcp] Buffered reaction in ${entry.threadType} ${entry.threadId}`);
-                });
+                api.listener.on(
+                    "reaction",
+                    guardHandler("reaction", (reaction) => {
+                        if (reaction?.isSelf && opts.self === false) return;
+                        let entry = null;
+                        try {
+                            entry = normalizeReaction(reaction);
+                        } catch (e) {
+                            console.error("[mcp] reaction parse failed:", e.message);
+                            return;
+                        }
+                        if (!entry || !entry.threadId) return;
+                        if (!filter.shouldWatch(entry.threadId, entry.threadType)) return;
+                        buffer.push(entry.threadId, entry);
+                        console.error(`[mcp] Buffered reaction in ${entry.threadType} ${entry.threadId}`);
+                    }),
+                );
 
-                api.listener.on("group_event", (event) => {
-                    const requests = joinRequestRecordsFromEvent(event);
-                    if (requests.length) {
-                        void announceJoinRequests(api, requests);
-                        return;
-                    }
-                    let records = [];
-                    try {
-                        records = joinRecordsFromEvent(event, getOwnId());
-                    } catch (e) {
-                        console.error("[mcp] group_event parse failed:", e.message);
-                        return;
-                    }
-                    if (!records.length) return;
-                    joinLog.add(records);
-                    if (!filter.shouldWatch(records[0].groupId, "group")) return;
-                    for (const rec of records) {
-                        buffer.push(rec.groupId, joinToBufferMessage(rec));
-                    }
-                    console.error(`[mcp] ${records.length} member(s) joined group ${records[0].groupId}`);
-                });
+                api.listener.on(
+                    "group_event",
+                    guardHandler("group event", (event) => {
+                        const requests = joinRequestRecordsFromEvent(event);
+                        if (requests.length) {
+                            void announceJoinRequests(api, requests);
+                            return;
+                        }
+                        let records = [];
+                        try {
+                            records = joinRecordsFromEvent(event, getOwnId());
+                        } catch (e) {
+                            console.error("[mcp] group_event parse failed:", e.message);
+                            return;
+                        }
+                        if (!records.length) return;
+                        joinLog.add(records);
+                        if (!filter.shouldWatch(records[0].groupId, "group")) return;
+                        for (const rec of records) {
+                            buffer.push(rec.groupId, joinToBufferMessage(rec));
+                        }
+                        console.error(`[mcp] ${records.length} member(s) joined group ${records[0].groupId}`);
+                    }),
+                );
 
                 api.listener.on("connected", () => {
                     if (reconnectCount > 0) {
@@ -389,12 +408,14 @@ export function registerMCPCommands(program) {
                 });
 
                 api.listener.on("disconnected", (code) => {
+                    lastDropAt = Date.now();
                     syncLog.onDisconnected();
                     if (shuttingDown) return;
                     console.error(`[mcp] Disconnected (code: ${code}). Auto-retrying...`);
                 });
 
                 api.listener.on("closed", async (code) => {
+                    lastDropAt = Date.now();
                     syncLog.onDisconnected();
                     // Ctrl+C stops the listener, which fires this event — don't re-login.
                     if (shuttingDown) return;
@@ -458,9 +479,9 @@ export function registerMCPCommands(program) {
                     }
                 });
 
-                api.listener.on("error", () => {
-                    // WS errors are followed by close/disconnect — suppress to avoid noise
-                });
+                // 1.9.1: no longer swallowed. zca-js also reports here a frame it failed to decode or a handler that
+                // threw, i.e. messages that never reached the buffer. Rate-limited, since a dying socket repeats itself.
+                api.listener.on("error", (err) => logListenerError(err));
             }
 
             // Wire listener and start

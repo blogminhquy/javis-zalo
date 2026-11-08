@@ -2,6 +2,23 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.9.1] - 2026-11-08
+
+### Fixed
+- Messages that reached the history but never the live feed (`zalo_get_messages`). Javis report, 08/11/2026: a
+  private chat stopped in the Javis inbox at 09:28 while the phone went on until 09:53, messages both ways, and
+  `zalo_get_history` had every one of them. Two paths did that:
+  - **A short drop.** Zalo replays recent messages after every connect, and the replay always filled the history,
+    but it reached the live feed only for a gap the sync log had recorded, and drops shorter than 5 s are not
+    recorded. zca-js reconnects a dropped socket within seconds, so most drops were that short. Every reconnect now
+    puts the replayed messages from 5 minutes before the drop into the live feed (`replayFeedFrom`); the buffer
+    skips the ones it already holds.
+  - **A message that made the handler throw.** zca-js emits the messages of one frame in a loop, so an exception in
+    the "message" handler dropped every later message of that frame without a trace. The message, reaction and
+    group-event handlers are now guarded: an exception costs only its own event and is logged (`guardHandler`).
+- The listener's "error" events are logged (at most one line a minute) instead of ignored: zca-js reports there a
+  frame it could not decode, which is a lost message too.
+
 ## [1.9.0] - 2026-10-30
 
 ### Added
