@@ -2,6 +2,24 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.10.0] - 2026-11-10
+
+### Added
+- **Live push.** With `JAVIS_ZALO_PUSH_URL` set, `mcp start` tells a consumer on the same machine the moment
+  something lands in the live feed, so it reads `zalo_get_messages` right then instead of on a timer. Javis owner
+  request, 10/11/2026: Zalo delivers a message to this process in real time, but Javis only learned about it by
+  asking every 20 seconds, all day, on accounts where no message arrived for hours, and a group message still
+  waited up to 20 seconds.
+  - The request is a wake-up, never content: `events` (`ready`, `messages`, `connected`, `disconnected`), the
+    buffer `cursor` and whether Zalo is `connected`. Messages are still handed out by the MCP tool only.
+  - Loopback only (`127.0.0.1`, `localhost`, `::1`); any other host leaves it off. Optional bearer token in
+    `JAVIS_ZALO_PUSH_TOKEN`.
+  - A burst is one request. A failed request is retried with a growing pause until delivered, and never blocks or
+    throws into a Zalo handler.
+  - Every path into the live feed pushes: messages, reactions, group joins and join requests, and messages
+    recovered after an outage (`MessageBuffer.setOnPush`).
+  - Without the variable nothing changes: no request is sent and polling works as before.
+
 ## [1.9.1] - 2026-11-08
 
 ### Fixed

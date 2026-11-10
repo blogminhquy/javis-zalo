@@ -13,6 +13,9 @@ import { registerTools } from "./mcp-tools.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf8"));
 
+/** javis-zalo's own version, as the MCP server reports it. */
+export const SERVER_VERSION = pkg.version;
+
 /**
  * Create and start MCP server with stdio transport.
  * All logs MUST use console.error() — stdout is reserved for MCP protocol.
