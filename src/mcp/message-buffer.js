@@ -14,6 +14,22 @@ export class MessageBuffer {
         this._maxSize = maxSize;
         this._maxAge = maxAge;
         this._globalCursor = 0;
+        /** @type {((cursor: number) => void)|null} Called after every push (live push, 1.10.0). */
+        this._onPush = null;
+    }
+
+    /**
+     * Be told about every message that enters the buffer, whatever put it there (live message, reaction, join,
+     * a message recovered after an outage). One listener; a throw in it never costs the message.
+     * @param {((cursor: number) => void)|null} fn
+     */
+    setOnPush(fn) {
+        this._onPush = typeof fn === "function" ? fn : null;
+    }
+
+    /** The cursor of the newest message ever pushed (0 = nothing yet). */
+    cursor() {
+        return this._globalCursor;
     }
 
     /**
@@ -31,6 +47,13 @@ export class MessageBuffer {
         thread.messages.push(message);
         thread.lastActivity = Date.now();
         this._evict(threadId);
+        if (this._onPush) {
+            try {
+                this._onPush(message._cursor);
+            } catch (e) {
+                console.error("[message-buffer] onPush listener threw:", e?.message || e);
+            }
+        }
     }
 
     /**

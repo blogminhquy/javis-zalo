@@ -19,7 +19,8 @@ import { ThreadFilter } from "../mcp/thread-filter.js";
 import { loadMCPConfig, parseDuration } from "../mcp/mcp-config.js";
 import { normalizeMessage, toHistoryMessage } from "../mcp/message-normalize.js";
 import { normalizeReaction } from "../mcp/reactions.js";
-import { createMCPServer } from "../mcp/mcp-server.js";
+import { createMCPServer, SERVER_VERSION } from "../mcp/mcp-server.js";
+import { createLivePush, pushTargetFromEnv } from "../mcp/live-push.js";
 import { registerTools } from "../mcp/mcp-tools.js";
 import { createHTTPServer } from "../mcp/mcp-http-transport.js";
 import { ZaloNotifier } from "../mcp/notifier.js";
@@ -123,6 +124,19 @@ export function registerMCPCommands(program) {
             const logListenerError = listenerErrorLogger(); // zca-js "error" events, rate-limited (1.9.1)
             let rapidCloses = 0; // consecutive closes that happened before the connection was stable
             let warnedMultiSession = false; // one-shot guard for the multi-session warning
+
+            // Live push (1.10.0): wake the consumer the moment the buffer changes or the Zalo connection goes up or
+            // down, so it does not have to ask on a timer. Off unless JAVIS_ZALO_PUSH_URL is set. See live-push.js.
+            let zaloConnected = false;
+            const livePush = createLivePush({
+                target: pushTargetFromEnv(),
+                version: SERVER_VERSION,
+                state: () => ({ cursor: buffer.cursor(), connected: zaloConnected }),
+            });
+            if (livePush.enabled) {
+                buffer.setOnPush(() => livePush.notify("messages"));
+                console.error("[mcp] Live push on: the consumer is told when a message arrives");
+            }
 
             /**
              * Fetch old messages for one thread type via the WebSocket backfill (cmd 510/511),
@@ -402,6 +416,8 @@ export function registerMCPCommands(program) {
                         console.error(`[mcp] Reconnected (#${reconnectCount})`);
                     }
                     lastConnectedAt = Date.now();
+                    zaloConnected = true;
+                    livePush.notify("connected");
                     syncLog.onConnected();
                     // Seed history from the server backfill while inside the sync window.
                     primeHistoryOnConnect(api);
@@ -409,6 +425,8 @@ export function registerMCPCommands(program) {
 
                 api.listener.on("disconnected", (code) => {
                     lastDropAt = Date.now();
+                    zaloConnected = false;
+                    livePush.notify("disconnected");
                     syncLog.onDisconnected();
                     if (shuttingDown) return;
                     console.error(`[mcp] Disconnected (code: ${code}). Auto-retrying...`);
@@ -416,6 +434,8 @@ export function registerMCPCommands(program) {
 
                 api.listener.on("closed", async (code) => {
                     lastDropAt = Date.now();
+                    zaloConnected = false;
+                    livePush.notify("disconnected");
                     syncLog.onDisconnected();
                     // Ctrl+C stops the listener, which fires this event — don't re-login.
                     if (shuttingDown) return;
@@ -498,6 +518,8 @@ export function registerMCPCommands(program) {
                     Math.min(15000, HEARTBEAT_MS),
                 ).unref();
                 console.error("[mcp] Zalo listener started. MCP server ready.");
+                // Tells the consumer this process pushes, so it can stop its timer for this account.
+                livePush.notify("ready");
             } catch (e) {
                 console.error("[mcp] Failed to start listener:", e.message);
                 process.exit(1);
@@ -510,6 +532,7 @@ export function registerMCPCommands(program) {
                     getApi().listener.stop();
                 } catch {}
                 notifier?.destroy();
+                livePush.stop();
                 httpServer?.close();
                 process.exit(0);
             });

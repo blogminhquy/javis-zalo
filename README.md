@@ -84,14 +84,32 @@ also go to the live feed, flagged `recovered: true`. History is kept in
 `~/.zalo-agent-cli/history.jsonl` (30 days) and the outages in `~/.zalo-agent-cli/sync-state.json`,
 so a restart neither wipes history nor goes unnoticed.
 
+### Live push instead of polling
+
+A consumer on the same machine can be told the moment something lands in the live feed, instead of
+calling `zalo_get_messages` on a timer. Start the server with two environment variables:
+
+- `JAVIS_ZALO_PUSH_URL`: where to POST, for example `http://127.0.0.1:7777/zalo/push?conn=<id>`.
+  Loopback only (`127.0.0.1`, `localhost`, `::1`); any other host leaves live push off.
+- `JAVIS_ZALO_PUSH_TOKEN` (optional): sent as `Authorization: Bearer <token>`.
+
+Each request is a wake-up, never content:
+`{ "source": "javis-zalo", "version", "pid", "ts", "events": [...], "cursor", "connected" }`.
+`events` holds any of `ready` (the server started and pushes), `messages` (the live feed has
+something new: read it with `zalo_get_messages`), `connected` and `disconnected` (the Zalo
+connection went up or down). A burst of messages is one request. A request that fails is retried
+with a growing pause (1 s up to 30 s) until it is delivered, so a consumer that restarts still gets
+the events it missed as one request. Without the variable nothing is sent and polling works as before.
+
 ## Where data lives
 
 Sessions and settings stay on your machine under `~/.zalo-agent-cli/` (accounts, credentials,
 MCP config, downloaded media, captured message history). Zalo Official Account credentials live in `~/.zalo-agent/`. The
 folder names are kept from earlier builds so accounts that are already signed in stay signed in.
 
-Nothing is sent anywhere except Zalo itself, a webhook or proxy you configure, and `qr.sepay.vn`
-when you ask for a bank-transfer QR image.
+Nothing is sent anywhere except Zalo itself, a webhook or proxy you configure, `qr.sepay.vn`
+when you ask for a bank-transfer QR image, and the local wake-up of live push when you turn it on
+(this machine only, no message content).
 
 ## Development
 

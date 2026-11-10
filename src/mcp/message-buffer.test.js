@@ -318,3 +318,34 @@ describe("MessageBuffer.has (1.5.0)", () => {
         assert.equal(buf.has("T1", null), false);
     });
 });
+
+describe("MessageBuffer onPush (live push, 1.10.0)", () => {
+    it("tells the listener about every push, with the new cursor", () => {
+        const buf = new MessageBuffer();
+        const seen = [];
+        buf.setOnPush((cursor) => seen.push(cursor));
+        buf.push("a", msg("one"));
+        buf.push("b", msg("two"));
+        assert.deepEqual(seen, [1, 2]);
+        assert.equal(buf.cursor(), 2);
+    });
+
+    it("keeps the message when the listener throws", () => {
+        const buf = new MessageBuffer();
+        buf.setOnPush(() => {
+            throw new Error("listener broke");
+        });
+        assert.doesNotThrow(() => buf.push("a", msg("kept")));
+        assert.equal(buf.read("a").messages.length, 1);
+    });
+
+    it("has no listener by default and can drop one", () => {
+        const buf = new MessageBuffer();
+        assert.equal(buf.cursor(), 0);
+        const seen = [];
+        buf.setOnPush((c) => seen.push(c));
+        buf.setOnPush(null);
+        buf.push("a", msg("quiet"));
+        assert.deepEqual(seen, []);
+    });
+});
