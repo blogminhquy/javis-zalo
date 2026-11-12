@@ -2,6 +2,15 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.11.0] - 2026-11-12
+
+### Added
+- `zalo_send_message` takes an optional `replyToMsgId`: the id of an earlier text message in the same
+  thread. The message goes out as a reply to it, so Zalo shows the quoted message above it. Useful
+  when a contact sent several messages and only one needs an answer. If the message is unknown, has no
+  client id or is not a text message, nothing is sent and the error says why. Without `replyToMsgId`
+  the message goes out exactly as before.
+
 ## [1.10.0] - 2026-11-10
 
 ### Added
