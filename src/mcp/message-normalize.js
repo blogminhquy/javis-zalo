@@ -65,7 +65,7 @@ export function extractMentions(msg) {
  */
 export function normalizeMessage(msg, timestamp = Date.now()) {
     const rawContent = msg.data.content;
-    const { isText, text, type } = resolveContent(rawContent, msg.data.msgType);
+    const { text, type } = resolveContent(rawContent, msg.data.msgType);
     return {
         id: msg.data.msgId,
         // Zalo's client-side id of the same message. Reacting to it needs both ids (zalo_add_reaction).
@@ -80,15 +80,26 @@ export function normalizeMessage(msg, timestamp = Date.now()) {
         text,
         timestamp,
         type,
-        attachment:
-            !isText && rawContent
-                ? {
-                      type: msg.data.msgType,
-                      url: rawContent.href || null,
-                      description: rawContent.title || null,
-                  }
-                : null,
+        attachment: extractAttachment(rawContent, msg.data.msgType),
         replyTo: extractReplyTo(msg),
+    };
+}
+
+/**
+ * The media link of a non-text message, or null for text.
+ * A photo or clip sent WITH a caption has the caption as its title, so its text is the caption and the
+ * link only survives here. Before 1.13.0 the history store kept the text alone, so the link of every
+ * captioned photo was lost once the ~2 hour live buffer moved on.
+ * @param {*} rawContent - msg.data.content
+ * @param {string} [msgType] - msg.data.msgType
+ * @returns {{ type: string|null, url: string|null, description: string|null } | null}
+ */
+export function extractAttachment(rawContent, msgType) {
+    if (!rawContent || typeof rawContent !== "object") return null;
+    return {
+        type: msgType || null,
+        url: rawContent.href || null,
+        description: rawContent.title || null,
     };
 }
 
@@ -113,6 +124,8 @@ export function toHistoryMessage(msg, fallbackTs = Date.now()) {
         text,
         timestamp: msg.data?.ts !== null && msg.data?.ts !== undefined ? Number(msg.data.ts) : fallbackTs,
         type,
+        // 1.13.0: keep the media link too (a captioned photo's text is only its caption).
+        attachment: extractAttachment(msg.data?.content, msg.data?.msgType),
         replyTo: extractReplyTo(msg),
         mentions: extractMentions(msg),
     };

@@ -282,3 +282,34 @@ describe("HistoryStore on disk (1.5.0)", () => {
         assert.equal(store.count("T1"), 1);
     });
 });
+
+describe("HistoryStore attachment upgrade (1.13.0)", () => {
+    const att = { type: "chat.photo", url: "https://photo.zdn.vn/a.jpg", description: "cap" };
+
+    it("fills the link into a message stored without one when it is replayed", () => {
+        const store = new HistoryStore(2000);
+        store.ingest("T1", [m("1", 100, "cap")]);
+        const added = store.ingest("T1", [{ ...m("1", 100, "cap"), attachment: att }]);
+        assert.equal(added, 0);
+        assert.equal(store.count("T1"), 1);
+        assert.deepEqual(store.find("T1", "1").attachment, att);
+    });
+
+    it("does not overwrite a link already stored", () => {
+        const store = new HistoryStore(2000);
+        store.ingest("T1", [{ ...m("1", 100), attachment: att }]);
+        store.ingest("T1", [{ ...m("1", 100), attachment: { ...att, url: "https://other/b.jpg" } }]);
+        assert.equal(store.find("T1", "1").attachment.url, att.url);
+    });
+
+    it("keeps the upgrade across a restart", () => {
+        const file = join(mkdtempSync(join(tmpdir(), "history-")), "history.jsonl");
+        const now = () => 200;
+        const a = new HistoryStore(2000, { filePath: file, now });
+        a.ingest("T1", [m("1", 100, "cap")]);
+        a.ingest("T1", [{ ...m("1", 100, "cap"), attachment: att }]);
+        const b = new HistoryStore(2000, { filePath: file, now });
+        assert.equal(b.count("T1"), 1);
+        assert.equal(b.find("T1", "1").attachment.url, att.url);
+    });
+});

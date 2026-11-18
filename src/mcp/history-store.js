@@ -119,13 +119,23 @@ export class HistoryStore {
             this._threads.set(threadId, list);
         }
 
-        const seen = new Set(list.map((m) => String(m.msgId)));
+        const byId = new Map(list.map((m) => [String(m.msgId), m]));
         const fresh = [];
+        const upgraded = [];
         for (const m of messages) {
             if (!m || m.msgId === null || m.msgId === undefined) continue;
             const id = String(m.msgId);
-            if (seen.has(id)) continue;
-            seen.add(id);
+            const old = byId.get(id);
+            if (old) {
+                // A message stored before 1.13.0 has no attachment. When Zalo replays it (reconnect backfill)
+                // or the file holds a newer line for it, fill the link in instead of dropping the copy.
+                if (!old.attachment?.url && m.attachment?.url) {
+                    old.attachment = m.attachment;
+                    upgraded.push(old);
+                }
+                continue;
+            }
+            byId.set(id, m);
             list.push(m);
             fresh.push(m);
         }
@@ -136,8 +146,9 @@ export class HistoryStore {
             if (list.length > this._maxPerThread) {
                 this._threads.set(threadId, list.slice(list.length - this._maxPerThread));
             }
-            this._append(fresh);
         }
+        // Upgraded ones are appended again: on load the later line fills the link in the same way.
+        this._append(fresh.concat(upgraded));
         return added;
     }
 
