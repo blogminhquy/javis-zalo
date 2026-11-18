@@ -137,3 +137,28 @@ describe("toHistoryMessage (history shape)", () => {
         assert.equal(toHistoryMessage(msg, 999).timestamp, 999);
     });
 });
+
+describe("toHistoryMessage attachment (1.13.0)", () => {
+    it("keeps the link of a captioned photo, whose text is only the caption", () => {
+        const out = toHistoryMessage(
+            fakeMsg({
+                msgType: "chat.photo",
+                content: {
+                    title: "Bé vẽ tranh",
+                    href: "https://photo.zdn.vn/a.jpg",
+                    thumb: "https://photo.zdn.vn/t.jpg",
+                },
+            }),
+        );
+        assert.equal(out.text, "Bé vẽ tranh");
+        assert.deepEqual(out.attachment, {
+            type: "chat.photo",
+            url: "https://photo.zdn.vn/a.jpg",
+            description: "Bé vẽ tranh",
+        });
+    });
+
+    it("has no attachment for a text message", () => {
+        assert.equal(toHistoryMessage(fakeMsg({ content: "xin chào" })).attachment, null);
+    });
+});

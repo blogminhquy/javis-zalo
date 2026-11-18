@@ -2,6 +2,21 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.13.0] - 2026-11-18
+
+### Fixed
+- **The history store keeps the link of a photo or clip sent with a caption.** `toHistoryMessage` stored only the
+  message text. For a photo with no caption that text is the link, but for a captioned photo it is the caption, so
+  the link was lost and only the 2-hour live buffer still had it. A consumer that downloads a group's photos later
+  in the day (Javis's `zalo-tai-anh-nhom`) reported those photos as missing a link. Javis owner report, 18/11/2026:
+  577 captioned photos across two accounts had no link in history.
+  - History messages now carry `attachment` (`type`, `url`, `description`), the same shape live messages already
+    had, for every non-text message (photo, clip, file), captioned or not. `text` is unchanged, so existing readers
+    keep working.
+  - A message already stored without a link gets it filled in when Zalo replays it (reconnect backfill, roughly the
+    last two weeks), so recently missed captioned photos become downloadable again. The upgraded line is appended
+    and wins on load.
+
 ## [1.12.0] - 2026-11-18
 
 ### Fixed
