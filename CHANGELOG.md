@@ -2,6 +2,14 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [Unreleased]
+
+### Added
+- **`zalo_send_voice` MCP tool.** Sends a voice audio message from an `https://` URL to a DM or group through the live MCP session (`threadId`, `voiceUrl`, optional `threadType` and `ttl`).
+
+### Security
+- **`send-voice` URL and `ttl` hardening.** Rejects non-`https:` URLs and negative/invalid `ttl` values in both `zalo_send_voice` and CLI `msg send-voice`, and omits signed URLs from console status and error logs.
+
 ## [1.14.0] - 2026-11-20
 
 ### Fixed

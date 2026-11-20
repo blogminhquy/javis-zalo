@@ -8,6 +8,13 @@ import { getApi } from "../core/zalo-client.js";
 import { success, error, info, output } from "../utils/output.js";
 import { extractMessageText } from "../utils/extract-message-text.js";
 import { isListening, needsLiveConfirm, sendAttachments, UPLOAD_CONFIRM_TIMEOUT_MS } from "../core/send-files.js";
+import { redactUrls, validateSendVoiceInput } from "../mcp/send-voice.js";
+
+/** Parse strict base-10 integer CLI option without Commander radix pitfall. */
+function parseCliInt(value) {
+    const s = String(value).trim();
+    return /^-?\d+$/.test(s) ? Number(s) : Number.NaN;
+}
 
 /** Seconds to wait for the WebSocket when `--listen` opens one. */
 const LISTEN_CONNECT_TIMEOUT_S = 15;
@@ -381,14 +388,26 @@ export function registerMsgCommands(program) {
     msg.command("send-voice <threadId> <voiceUrl>")
         .description("Send a voice message from URL")
         .option("-t, --type <n>", "Thread type: 0=User, 1=Group", "0")
-        .option("--ttl <ms>", "Time to live in milliseconds", parseInt, 0)
+        .option("--ttl <ms>", "Time to live in milliseconds", parseCliInt, 0)
         .action(async (threadId, voiceUrl, opts) => {
             try {
-                info(`Sending voice: ${voiceUrl}`);
-                const result = await getApi().sendVoice({ voiceUrl, ttl: opts.ttl }, threadId, Number(opts.type));
-                output(result, program.opts().json, () => success(`Voice sent to ${threadId}`));
+                const valid = validateSendVoiceInput({
+                    threadId,
+                    voiceUrl,
+                    threadType: opts.type,
+                    ttl: opts.ttl,
+                });
+                if (!program.opts().json) {
+                    info("Sending voice...");
+                }
+                const result = await getApi().sendVoice(
+                    { voiceUrl: valid.voiceUrl, ttl: valid.ttl },
+                    valid.threadId,
+                    valid.threadType,
+                );
+                output(result, program.opts().json, () => success(`Voice sent to ${valid.threadId}`));
             } catch (e) {
-                error(`Send voice failed: ${e.message}`);
+                error(`Send voice failed: ${redactUrls(String(e?.message || e), [voiceUrl])}`);
             }
         });
 

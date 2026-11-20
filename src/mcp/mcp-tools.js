@@ -1,8 +1,9 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 16 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
- * zalo_send_link, zalo_send_typing, zalo_send_file, zalo_add_reaction, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media,
- * zalo_get_group_joins, zalo_list_join_requests, zalo_review_join_requests, zalo_get_labels.
+ * Registers 17 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * zalo_send_link, zalo_send_voice, zalo_send_typing, zalo_send_file, zalo_add_reaction, zalo_list_threads,
+ * zalo_search_threads, zalo_mark_read, zalo_view_media, zalo_get_group_joins, zalo_list_join_requests,
+ * zalo_review_join_requests, zalo_get_labels.
  */
 
 import { z } from "zod";
@@ -14,6 +15,7 @@ import { REACTIONS, reactToMessage } from "./reactions.js";
 import { MAX_FILES_PER_SEND, sendFileFromOutbox } from "./send-file.js";
 import { buildQuote } from "./reply-quote.js";
 import { sendLinkCard } from "./send-link.js";
+import { redactUrls, sendVoiceMessage } from "./send-voice.js";
 import { OUTBOX_DIR } from "../core/send-files.js";
 import { getApi, isLoggedIn } from "../core/zalo-client.js";
 
@@ -797,6 +799,39 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
             } catch (e) {
                 console.error("[mcp-tools] zalo_view_media error:", e.message);
                 return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_send_voice ---
+    server.registerTool(
+        "zalo_send_voice",
+        {
+            title: "Send Zalo Voice Message",
+            description:
+                "Send a voice audio message to a Zalo thread (DM or group) from an HTTPS URL (e.g. m4a/aac). " +
+                "Only https:// URLs are accepted; ttl must be a non-negative integer in milliseconds (0 = no expiry). " +
+                "threadType: 0=DM(User), 1=Group.",
+            inputSchema: z.object({
+                threadId: z.string().min(1).describe("Thread ID to send voice message to"),
+                voiceUrl: z.string().min(1).describe("HTTPS URL of the voice audio file; http:// is rejected"),
+                threadType: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .max(1)
+                    .default(THREAD_USER)
+                    .describe("Thread type: 0=DM(User), 1=Group"),
+                ttl: z.number().int().min(0).default(0).describe("Time to live in milliseconds (0 = no auto-expiry)"),
+            }),
+        },
+        async (args) => {
+            try {
+                return ok(await sendVoiceMessage(live(), args));
+            } catch (e) {
+                const safeMsg = redactUrls(String(e?.message || e), [args?.voiceUrl]);
+                console.error("[mcp-tools] zalo_send_voice error:", safeMsg);
+                return err(safeMsg);
             }
         },
     );
