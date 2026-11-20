@@ -131,6 +131,28 @@ describe("toHistoryMessage (history shape)", () => {
         assert.equal(toHistoryMessage(fakeMsg()).cliMsgId, null);
     });
 
+    it("keeps a link card's link, title and description (live and history alike)", () => {
+        const card = {
+            title: "@Bot xem giúp",
+            description: "Try out Artifacts created by Claude users",
+            href: "https://claude.ai/public/artifacts/abc",
+            action: "recommened.link",
+        };
+        const msg = fakeMsg({ msgType: "chat.recommended", content: card, mentions: [{ uid: "u7", pos: 0, len: 4 }] });
+        const want = { type: "chat.recommended", url: card.href, description: card.title };
+        const hist = toHistoryMessage(msg);
+        assert.deepEqual(hist.attachment, want);
+        assert.equal(hist.text, card.description);
+        const live = normalizeMessage(msg, 1);
+        assert.deepEqual(live.attachment, want);
+        assert.deepEqual(live.mentions, ["u7"]);
+    });
+
+    it("has no attachment for a text message", () => {
+        assert.equal(toHistoryMessage(fakeMsg({ content: "hi" })).attachment, null);
+        assert.equal(normalizeMessage(fakeMsg({ content: "hi" }), 1).mentions, null);
+    });
+
     it("falls back to the provided timestamp when ts is absent", () => {
         const msg = fakeMsg();
         delete msg.data.ts;

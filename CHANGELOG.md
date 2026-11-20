@@ -2,6 +2,18 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [1.14.0] - 2026-11-20
+
+### Fixed
+- **The history keeps a link card's link.** `zalo_get_history`, `zalo_search_history` and `history.jsonl` now carry
+  the same `attachment` (`type`, `url`, `description`) as the live feed, so a link card filed in the history keeps
+  its URL and title instead of only the page's description. Javis field report, 20/11/2026: a claude.ai link was
+  stored as "Try out Artifacts created by Claude users" alone.
+
+### Added
+- **The live feed reports who was tagged** (`mentions`, the same uid list as the history), so a tag inside a link
+  card, which leaves no "@Name" in the text, can still be recognised. `null` when nobody was tagged.
+
 ## [1.13.0] - 2026-11-19
 
 ### Added

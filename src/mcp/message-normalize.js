@@ -58,6 +58,23 @@ export function extractMentions(msg) {
 }
 
 /**
+ * The non-text part of a message: its link (`content.href`: a photo, a file, the page of a link card) and Zalo's
+ * `content.title`. Shared by the live buffer and the history, so a link card filed in the history keeps its link
+ * (Javis field report 20/11/2026: the history kept only the page's description, the link was lost).
+ * @param {*} rawContent - msg.data.content
+ * @param {string} [msgType] - msg.data.msgType
+ * @returns {{ type: string, url: string|null, description: string|null } | null}
+ */
+export function extractAttachment(rawContent, msgType) {
+    if (!rawContent || typeof rawContent !== "object") return null;
+    return {
+        type: msgType,
+        url: rawContent.href || null,
+        description: rawContent.title || null,
+    };
+}
+
+/**
  * Normalize a raw zca-js message event into the live buffer's message shape.
  * @param {object} msg - Raw zca-js message event
  * @param {number} [timestamp] - Receive time in ms (defaults to Date.now())
@@ -80,15 +97,10 @@ export function normalizeMessage(msg, timestamp = Date.now()) {
         text,
         timestamp,
         type,
-        attachment:
-            !isText && rawContent
-                ? {
-                      type: msg.data.msgType,
-                      url: rawContent.href || null,
-                      description: rawContent.title || null,
-                  }
-                : null,
+        attachment: isText ? null : extractAttachment(rawContent, msg.data.msgType),
         replyTo: extractReplyTo(msg),
+        // Who was tagged, as in the history: a tag inside a link card has no "@Name" in the text to find.
+        mentions: extractMentions(msg),
     };
 }
 
@@ -101,7 +113,7 @@ export function normalizeMessage(msg, timestamp = Date.now()) {
  * @returns {object} History message
  */
 export function toHistoryMessage(msg, fallbackTs = Date.now()) {
-    const { text, type } = resolveContent(msg.data?.content, msg.data?.msgType);
+    const { isText, text, type } = resolveContent(msg.data?.content, msg.data?.msgType);
     return {
         msgId: msg.data?.msgId,
         cliMsgId: msg.data?.cliMsgId !== null && msg.data?.cliMsgId !== undefined ? String(msg.data.cliMsgId) : null,
@@ -113,6 +125,7 @@ export function toHistoryMessage(msg, fallbackTs = Date.now()) {
         text,
         timestamp: msg.data?.ts !== null && msg.data?.ts !== undefined ? Number(msg.data.ts) : fallbackTs,
         type,
+        attachment: isText ? null : extractAttachment(msg.data?.content, msg.data?.msgType),
         replyTo: extractReplyTo(msg),
         mentions: extractMentions(msg),
     };
