@@ -2,6 +2,7 @@
  * Poll commands — create, view, vote, add options, lock, and share polls in groups.
  */
 
+import { getPollInfoWithVoters } from "../core/polls.js";
 import { getApi } from "../core/zalo-client.js";
 import { success, error, info, output } from "../utils/output.js";
 
@@ -48,9 +49,12 @@ export function registerPollCommands(program) {
 
     poll.command("info <pollId>")
         .description("View poll details and results")
-        .action(async (pollId) => {
+        .option("--voters", "Include normalized voters with resolved display names")
+        .action(async (pollId, opts) => {
             try {
-                const result = await getApi().getPollDetail(Number(pollId));
+                const result = opts.voters
+                    ? await getPollInfoWithVoters(getApi(), pollId)
+                    : await getApi().getPollDetail(Number(pollId));
                 output(result, program.opts().json, () => {
                     info(`Question: ${result.question}`);
                     info(`Poll ID: ${result.poll_id}`);
@@ -70,6 +74,10 @@ export function registerPollCommands(program) {
                         console.log(
                             `  ${String(o.option_id).padEnd(6)} ${String(o.votes).padEnd(6)} ${o.content}${voted}`,
                         );
+                        if (opts.voters && Array.isArray(o.voters) && o.voters.length > 0) {
+                            const list = o.voters.map((v) => (v.name ? `${v.name} (${v.id})` : v.id)).join(", ");
+                            console.log(`         Voters: ${list}`);
+                        }
                     }
                 });
             } catch (e) {

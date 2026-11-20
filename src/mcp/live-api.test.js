@@ -24,6 +24,15 @@ function fakeApi(tag, calls) {
         getPendingGroupMembers: async () => (calls.push([tag, "pending"]), { time: 1, users: [] }),
         reviewPendingMemberRequest: async () => (calls.push([tag, "review"]), { 300: 0 }),
         getLabels: async () => (calls.push([tag, "labels"]), { labelData: [], version: 1 }),
+        createPoll: async () => (
+            calls.push([tag, "createPoll"]),
+            { poll_id: 1, question: "Q", options: [], closed: false }
+        ),
+        getPollDetail: async () => (
+            calls.push([tag, "getPollDetail"]),
+            { poll_id: 1, question: "Q", options: [], closed: false }
+        ),
+        lockPoll: async () => (calls.push([tag, "lockPoll"]), ""),
     };
 }
 
@@ -44,16 +53,19 @@ describe("tools use the live API after a re-login", () => {
         );
     });
 
-    it("join requests and labels follow the new instance too", async () => {
+    it("join requests, labels, and polls follow the new instance too", async () => {
         const calls = [];
         const h = tools(fakeApi("old", calls));
         __setSessionForTests(fakeApi("new", calls));
         await h.zalo_list_join_requests({ threadId: "G1" });
         await h.zalo_review_join_requests({ threadId: "G1", userIds: ["300"], action: "approve" });
         await h.zalo_get_labels({ refresh: true });
+        await h.zalo_create_poll({ threadId: "G1", question: "Q?", options: ["A", "B"] });
+        await h.zalo_get_poll({ pollId: 1, includeVoters: false });
+        await h.zalo_lock_poll({ pollId: 1 });
         assert.deepEqual(
             calls.map((c) => c[0]),
-            ["new", "new", "new"],
+            ["new", "new", "new", "new", "new", "new"],
         );
     });
 

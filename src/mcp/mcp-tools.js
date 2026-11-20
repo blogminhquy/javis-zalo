@@ -1,8 +1,9 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 16 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * Registers 19 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
  * zalo_send_link, zalo_send_typing, zalo_send_file, zalo_add_reaction, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media,
- * zalo_get_group_joins, zalo_list_join_requests, zalo_review_join_requests, zalo_get_labels.
+ * zalo_get_group_joins, zalo_list_join_requests, zalo_review_join_requests, zalo_get_labels,
+ * zalo_create_poll, zalo_get_poll, zalo_lock_poll.
  */
 
 import { z } from "zod";
@@ -14,6 +15,7 @@ import { REACTIONS, reactToMessage } from "./reactions.js";
 import { MAX_FILES_PER_SEND, sendFileFromOutbox } from "./send-file.js";
 import { buildQuote } from "./reply-quote.js";
 import { sendLinkCard } from "./send-link.js";
+import { createPoll, getPollDetail, lockPoll } from "../core/polls.js";
 import { OUTBOX_DIR } from "../core/send-files.js";
 import { getApi, isLoggedIn } from "../core/zalo-client.js";
 
@@ -796,6 +798,89 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 return ok({ success: true, path: localPath, mediaType: message.type });
             } catch (e) {
                 console.error("[mcp-tools] zalo_view_media error:", e.message);
+                return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_create_poll ---
+    server.registerTool(
+        "zalo_create_poll",
+        {
+            title: "Create Zalo Poll",
+            description:
+                "Create a poll in a Zalo group (2 to 20 options). To restrict members from creating polls in a group, " +
+                "use zalo_update_group_settings with lockCreatePoll (PR #21). Note: once a poll is locked via " +
+                "zalo_lock_poll, Zalo API does NOT allow reopening/unlocking it; call zalo_create_poll to start a new poll round.",
+            inputSchema: z.object({
+                threadId: z.string().min(1).describe("Group thread ID to create the poll in"),
+                question: z.string().min(1).describe("Poll question"),
+                options: z.array(z.string().min(1)).min(2).max(20).describe("Poll choices (2 to 20 non-empty options)"),
+                allowMultiChoices: z.boolean().default(false).describe("Allow voters to pick multiple options"),
+                allowAddNewOption: z.boolean().default(false).describe("Allow members to add new options"),
+                hideVotePreview: z.boolean().default(false).describe("Hide vote results until the user votes"),
+                isAnonymous: z.boolean().default(false).describe("Hide voter identities (anonymous poll)"),
+                expireMinutes: z.number().min(0).default(0).describe("Auto-close after N minutes (0 = no expiration)"),
+            }),
+        },
+        async (args) => {
+            try {
+                return ok(await createPoll(live(), args));
+            } catch (e) {
+                console.error("[mcp-tools] zalo_create_poll error:", e.message);
+                return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_get_poll ---
+    server.registerTool(
+        "zalo_get_poll",
+        {
+            title: "Get Zalo Poll",
+            description:
+                "Get poll details, options, vote counts, and normalized voters ({ id, name }). " +
+                "When includeVoters is true (default), resolves voter display names via group member and user profiles. " +
+                "If the poll was created with isAnonymous: true, Zalo hides voter identities.",
+            inputSchema: z.object({
+                pollId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).describe("Positive poll ID"),
+                includeVoters: z
+                    .boolean()
+                    .default(true)
+                    .describe("Resolve voter display names via group/user profiles (default true)"),
+            }),
+        },
+        async ({ pollId, includeVoters }) => {
+            try {
+                return ok(await getPollDetail(live(), { pollId, includeVoters }));
+            } catch (e) {
+                console.error("[mcp-tools] zalo_get_poll error:", e.message);
+                return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_lock_poll ---
+    server.registerTool(
+        "zalo_lock_poll",
+        {
+            title: "Lock Zalo Poll",
+            description:
+                "Lock/close a Zalo poll so no more votes can be cast. " +
+                "Zalo API does NOT allow reopening/unlocking a locked poll (irreversible). " +
+                "To run a new round, create a new poll with zalo_create_poll, or use zalo_update_group_settings " +
+                "with lockCreatePoll (PR #21) to restrict who can create polls.",
+            inputSchema: z.object({
+                pollId: z
+                    .union([z.number().int().positive(), z.string().regex(/^\d+$/)])
+                    .describe("Positive poll ID to permanently lock"),
+            }),
+        },
+        async ({ pollId }) => {
+            try {
+                return ok(await lockPoll(live(), { pollId }));
+            } catch (e) {
+                console.error("[mcp-tools] zalo_lock_poll error:", e.message);
                 return err(e.message);
             }
         },

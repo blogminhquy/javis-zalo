@@ -2,6 +2,15 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [Unreleased]
+
+### Added
+- **MCP poll tools (`zalo_create_poll`, `zalo_get_poll`, `zalo_lock_poll`)**: create group polls, inspect poll
+  results with normalized voters (`{ id, name }`) and resolved display names (`getGroupMembersInfo` with
+  `getUserInfo` fallback), and lock polls (noting that Zalo API does not allow reopening a locked poll).
+- **`poll info --voters` CLI flag**: resolves and attaches normalized voter identities/names while preserving
+  existing `poll info --json` fields and behavior when `--voters` is omitted.
+
 ## [1.14.0] - 2026-11-20
 
 ### Fixed

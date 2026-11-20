@@ -175,3 +175,146 @@ describe("zalo_send_message replyToMsgId", () => {
         assert.deepEqual(calls, [["send", "hi", "g1", 1]]);
     });
 });
+
+function toolsWithSpecs(api) {
+    const handlers = {};
+    const specs = {};
+    registerTools(
+        {
+            registerTool: (name, spec, fn) => {
+                specs[name] = spec;
+                handlers[name] = fn;
+            },
+        },
+        api,
+        {},
+        {},
+        {},
+        null,
+        null,
+        null,
+    );
+    return { handlers, specs };
+}
+
+describe("zalo poll MCP tools", () => {
+    afterEach(() => clearSession());
+
+    it("documents irreversibility and lockCreatePoll guidance on poll tools", () => {
+        const { specs } = toolsWithSpecs({});
+        assert.match(specs.zalo_lock_poll.description, /does NOT allow reopening\/unlocking/i);
+        assert.match(specs.zalo_lock_poll.description, /zalo_create_poll/);
+        assert.match(specs.zalo_lock_poll.description, /lockCreatePoll/);
+        assert.match(specs.zalo_create_poll.description, /lockCreatePoll/);
+        assert.match(specs.zalo_create_poll.description, /zalo_lock_poll/);
+        assert.match(specs.zalo_get_poll.description, /isAnonymous/i);
+    });
+
+    it("validates poll schemas with zod", () => {
+        const { specs } = toolsWithSpecs({});
+        const parsedCreate = specs.zalo_create_poll.inputSchema.parse({
+            threadId: "g1",
+            question: "Lunch?",
+            options: ["Pho", "Bun"],
+        });
+        assert.equal(parsedCreate.allowMultiChoices, false);
+        assert.equal(parsedCreate.expireMinutes, 0);
+
+        assert.equal(
+            specs.zalo_create_poll.inputSchema.safeParse({ threadId: "g1", question: "Q", options: ["OnlyOne"] })
+                .success,
+            false,
+        );
+        assert.equal(
+            specs.zalo_create_poll.inputSchema.safeParse({
+                threadId: "g1",
+                question: "Q",
+                options: Array.from({ length: 21 }, (_, i) => `O${i}`),
+            }).success,
+            false,
+        );
+        assert.equal(
+            specs.zalo_create_poll.inputSchema.safeParse({
+                threadId: "g1",
+                question: "Q",
+                options: ["A", "B"],
+                expireMinutes: -5,
+            }).success,
+            false,
+        );
+
+        const parsedGet = specs.zalo_get_poll.inputSchema.parse({ pollId: "123" });
+        assert.equal(parsedGet.includeVoters, true);
+        assert.equal(specs.zalo_get_poll.inputSchema.safeParse({ pollId: 0 }).success, false);
+        assert.equal(specs.zalo_get_poll.inputSchema.safeParse({ pollId: "abc" }).success, false);
+        assert.equal(specs.zalo_lock_poll.inputSchema.safeParse({ pollId: 99 }).success, true);
+        assert.equal(specs.zalo_lock_poll.inputSchema.safeParse({ pollId: -1 }).success, false);
+    });
+
+    it("zalo_create_poll, zalo_get_poll, and zalo_lock_poll work and report errors via isError", async () => {
+        const api = {
+            createPoll: async (opts, threadId) => ({
+                poll_id: 901,
+                question: opts.question,
+                options: [
+                    { option_id: 1, content: "Yes", votes: 0, voted: false, voters: [] },
+                    { option_id: 2, content: "No", votes: 0, voted: false, voters: [] },
+                ],
+                expired_time: opts.expiredTime,
+                closed: false,
+                threadId,
+            }),
+            getPollDetail: async (pollId) => ({
+                poll_id: pollId,
+                question: "Ready?",
+                closed: false,
+                num_vote: 1,
+                options: [
+                    { option_id: 1, content: "Yes", votes: 1, voted: true, voters: ["u1"] },
+                    { option_id: 2, content: "No", votes: 0, voted: false, voters: [] },
+                ],
+            }),
+            getGroupMembersInfo: async () => ({
+                profiles: { u1: { displayName: "An" } },
+            }),
+            lockPoll: async () => "",
+        };
+
+        const { handlers } = toolsWithSpecs(api);
+        const created = parse(
+            await handlers.zalo_create_poll({
+                threadId: "g1",
+                question: "Ready?",
+                options: ["Yes", "No"],
+                expireMinutes: 15,
+            }),
+        );
+        assert.equal(created.pollId, 901);
+        assert.equal(created.expiredTime, 900_000);
+
+        const detail = parse(await handlers.zalo_get_poll({ pollId: 901, includeVoters: true }));
+        assert.equal(detail.pollId, 901);
+        assert.deepEqual(detail.voters, [{ id: "u1", name: "An" }]);
+
+        const locked = parse(await handlers.zalo_lock_poll({ pollId: "901" }));
+        assert.deepEqual(locked, { success: true, pollId: 901, closed: true, irreversible: true });
+
+        const failing = toolsWithSpecs({
+            createPoll: async () => {
+                throw new Error("create boom");
+            },
+            getPollDetail: async () => {
+                throw new Error("get boom");
+            },
+            lockPoll: async () => {
+                throw new Error("lock boom");
+            },
+        }).handlers;
+        assert.equal(
+            (await failing.zalo_create_poll({ threadId: "g1", question: "Q", options: ["A", "B"] })).isError,
+            true,
+        );
+        assert.equal((await failing.zalo_get_poll({ pollId: 1 })).isError, true);
+        assert.equal((await failing.zalo_lock_poll({ pollId: 1 })).isError, true);
+    });
+});
