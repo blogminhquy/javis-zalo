@@ -15,7 +15,7 @@ function api({ listening = true } = {}) {
         async sendMessage(content, threadId, type) {
             const up = await a.uploadAttachment(content.attachments);
             a.calls.push({ content, threadId, type });
-            return { attachment: up.map((_, i) => ({ msgId: 7 + i })) };
+            return { attachment: up.map((_, i) => ({ msgId: 7 + i, cliMsgId: 70 + i })) };
         },
     };
     return a;
@@ -36,10 +36,28 @@ describe("sendFileFromOutbox", () => {
             { threadId: "42", threadType: 1, paths: [join(outbox, "Danh sach.xlsx")], caption: "Gửi chị" },
             { outbox },
         );
-        assert.deepEqual(res, { success: true, sent: 1, files: ["Danh sach.xlsx"], messageIds: ["7"] });
+        assert.deepEqual(res, {
+            success: true,
+            sent: 1,
+            files: ["Danh sach.xlsx"],
+            messageIds: ["7"],
+            attachments: [{ msgId: "7", cliMsgId: "70" }],
+        });
         assert.equal(a.calls[0].threadId, "42");
         assert.equal(a.calls[0].type, 1);
         assert.equal(a.calls[0].content.msg, "Gửi chị");
+    });
+
+    it("cliMsgId is null when Zalo does not return one", async () => {
+        const a = api();
+        a.sendMessage = async () => ({ attachment: [{ msgId: 9 }] });
+        const res = await sendFileFromOutbox(
+            a,
+            { threadId: "42", paths: [join(outbox, "Danh sach.xlsx")] },
+            { outbox },
+        );
+        assert.deepEqual(res.attachments, [{ msgId: "9", cliMsgId: null }]);
+        assert.deepEqual(res.messageIds, ["9"]);
     });
 
     it("refuses a path outside the outbox before touching Zalo", async () => {

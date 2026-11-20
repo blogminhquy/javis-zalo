@@ -15,11 +15,11 @@ function fakeApi(calls, { parseFails = false, sendFails = false } = {}) {
         sendLink: async (opts, threadId, type) => {
             calls.push(["link", opts, threadId, type]);
             if (sendFails) throw new Error("send failed");
-            return { msgId: 777 };
+            return { msgId: 777, cliMsgId: 5 };
         },
         sendMessage: async (content, threadId, type) => (
             calls.push(["send", content, threadId, type]),
-            { message: { msgId: "m1" } }
+            { message: { msgId: "m1", cliMsgId: 6 } }
         ),
     };
 }
@@ -40,7 +40,7 @@ describe("sendLinkCard", () => {
     it("sends a card with the text", async () => {
         const calls = [];
         const r = await sendLinkCard(fakeApi(calls), { threadId: "9", url: URL, text: `Link: ${URL}`, threadType: 1 });
-        assert.deepEqual(r, { success: true, messageId: "777", preview: true });
+        assert.deepEqual(r, { success: true, messageId: "777", cliMsgId: "5", preview: true });
         assert.deepEqual(calls[1], ["link", { link: URL, msg: `Link: ${URL}` }, "9", 1]);
     });
 
@@ -49,6 +49,7 @@ describe("sendLinkCard", () => {
         const r = await sendLinkCard(fakeApi(calls, { parseFails: true }), { threadId: "9", url: URL, text: "Xem" });
         assert.equal(r.preview, false);
         assert.equal(r.messageId, "m1");
+        assert.equal(r.cliMsgId, "6");
         assert.deepEqual(calls[1], ["send", `Xem ${URL}`, "9", 0]);
         assert.equal(calls.length, 2);
     });

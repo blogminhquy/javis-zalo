@@ -19,7 +19,7 @@ export const MAX_FILES_PER_SEND = 10;
  * @param {object} api - zca-js API instance holding the live listener
  * @param {{ threadId: string, threadType?: number, paths: string[], caption?: string }} args
  * @param {{ outbox?: string, timeoutMs?: number }} [opts]
- * @returns {Promise<{ success: true, sent: number, files: string[], messageIds: string[] }>}
+ * @returns {Promise<{ success: true, sent: number, files: string[], messageIds: string[], attachments: { msgId: string, cliMsgId: string|null }[] }>}
  */
 export async function sendFileFromOutbox(api, args, opts = {}) {
     const { threadId, threadType = 0, paths, caption = "" } = args;
@@ -29,9 +29,12 @@ export async function sendFileFromOutbox(api, args, opts = {}) {
     const result = await sendAttachments(api, { msg: caption, paths: files }, threadId, Number(threadType), {
         timeoutMs: opts.timeoutMs ?? UPLOAD_CONFIRM_TIMEOUT_MS,
     });
-    const messageIds = (result?.attachment ?? [])
-        .map((a) => a?.msgId)
-        .filter((id) => id !== undefined && id !== null)
-        .map(String);
-    return { success: true, sent: files.length, files: files.map((f) => basename(f)), messageIds };
+    const attachments = (result?.attachment ?? [])
+        .filter((a) => a?.msgId !== undefined && a?.msgId !== null)
+        .map((a) => ({
+            msgId: String(a.msgId),
+            cliMsgId: a.cliMsgId !== undefined && a.cliMsgId !== null ? String(a.cliMsgId) : null,
+        }));
+    const messageIds = attachments.map((a) => a.msgId);
+    return { success: true, sent: files.length, files: files.map((f) => basename(f)), messageIds, attachments };
 }

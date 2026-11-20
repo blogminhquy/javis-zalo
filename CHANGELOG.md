@@ -2,6 +2,16 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [Unreleased]
+
+### Added
+- **`zalo_undo_message`: recall a message this account sent**, for both sides. Parameters: `threadId`, `msgId`,
+  optional `cliMsgId` (looked up from the live buffer or history when omitted; the call fails before reaching Zalo
+  when it is unknown) and `threadType`.
+- **Send results carry `cliMsgId`** so a sent message can be recalled right away: `zalo_send_message` and
+  `zalo_send_link` return `cliMsgId` (string or `null`), `zalo_send_file` returns
+  `attachments: [{ msgId, cliMsgId }]`. `messageId` and `messageIds` are unchanged.
+
 ## [1.14.0] - 2026-11-20
 
 ### Fixed

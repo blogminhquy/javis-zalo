@@ -15,8 +15,9 @@ function fakeApi(calls) {
     return {
         sendMessage: async (content, threadId, type) => (
             calls.push(["send", content, threadId, type]),
-            { message: { msgId: "m1" } }
+            { message: { msgId: "m1", cliMsgId: 4242 } }
         ),
+        undo: async (payload, threadId, type) => (calls.push(["undo", payload, threadId, type]), { status: 0 }),
         sendTypingEvent: async (threadId, type) => (calls.push(["typing", threadId, type]), { status: 0 }),
     };
 }
@@ -173,5 +174,71 @@ describe("zalo_send_message replyToMsgId", () => {
         const calls = [];
         await withHistory(fakeApi(calls), stored).zalo_send_message({ threadId: "g1", text: "hi", threadType: 1 });
         assert.deepEqual(calls, [["send", "hi", "g1", 1]]);
+    });
+});
+
+describe("zalo_send_message cliMsgId", () => {
+    afterEach(() => clearSession());
+
+    it("returns cliMsgId as a string next to the unchanged messageId", async () => {
+        const r = parse(await tools(fakeApi([])).zalo_send_message({ threadId: "1", text: "hi", threadType: 0 }));
+        assert.deepEqual(r, { success: true, messageId: "m1", cliMsgId: "4242" });
+    });
+
+    it("cliMsgId is null when Zalo returns none", async () => {
+        const api = { sendMessage: async () => ({ message: { msgId: "m2" } }) };
+        const r = parse(await tools(api).zalo_send_message({ threadId: "1", text: "hi", threadType: 0 }));
+        assert.equal(r.messageId, "m2");
+        assert.equal(r.cliMsgId, null);
+    });
+});
+
+describe("zalo_undo_message", () => {
+    afterEach(() => clearSession());
+
+    function withStores(api, stores) {
+        const handlers = {};
+        registerTools(
+            { registerTool: (name, _spec, fn) => (handlers[name] = fn) },
+            api,
+            stores.buffer ?? {},
+            {},
+            {},
+            null,
+            stores.historyStore ?? null,
+            null,
+        );
+        return handlers;
+    }
+
+    it("recalls with the given msgId and cliMsgId", async () => {
+        const calls = [];
+        const r = await tools(fakeApi(calls)).zalo_undo_message({
+            threadId: "g1",
+            msgId: "900",
+            cliMsgId: "55",
+            threadType: 1,
+        });
+        assert.equal(parse(r).success, true);
+        assert.deepEqual(calls, [["undo", { msgId: "900", cliMsgId: "55" }, "g1", 1]]);
+    });
+
+    it("looks cliMsgId up in the history when omitted", async () => {
+        const calls = [];
+        const historyStore = { find: (t, id) => (t === "g1" && id === "900" ? { cliMsgId: "55" } : null) };
+        await withStores(fakeApi(calls), { historyStore }).zalo_undo_message({
+            threadId: "g1",
+            msgId: "900",
+            threadType: 1,
+        });
+        assert.deepEqual(calls, [["undo", { msgId: "900", cliMsgId: "55" }, "g1", 1]]);
+    });
+
+    it("an unknown cliMsgId is reported and Zalo is not called", async () => {
+        const calls = [];
+        const r = await tools(fakeApi(calls)).zalo_undo_message({ threadId: "g1", msgId: "404", threadType: 0 });
+        assert.equal(r.isError, true);
+        assert.match(r.content[0].text, /no known cliMsgId/);
+        assert.deepEqual(calls, []);
     });
 });

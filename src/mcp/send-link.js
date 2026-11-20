@@ -19,6 +19,12 @@ export function linkMessageText(url, text) {
     return t.includes(url) ? t : `${t} ${url}`;
 }
 
+/** The client message id of a send result, as a string, or null when Zalo did not return one. */
+function cliMsgIdOf(result) {
+    const id = result?.message?.cliMsgId ?? result?.cliMsgId ?? null;
+    return id === null ? null : String(id);
+}
+
 /**
  * Send `text` with a card for `url`. When Zalo cannot read the page (parseLink fails: private page, timeout, a
  * site that blocks Zalo's reader), nothing has been sent yet, so the text goes out as a plain message and the
@@ -26,7 +32,7 @@ export function linkMessageText(url, text) {
  * the card may have been delivered and the contact would get the message twice.
  * @param {object} api - zca-js API instance (parseLink, sendLink, sendMessage)
  * @param {{ threadId: string, url: string, text?: string, threadType?: number }} args
- * @returns {Promise<{ success: true, messageId: string|null, preview: boolean, reason?: string }>}
+ * @returns {Promise<{ success: true, messageId: string|null, cliMsgId: string|null, preview: boolean, reason?: string }>}
  */
 export async function sendLinkCard(api, { threadId, url, text, threadType = 0 }) {
     const msg = linkMessageText(url, text);
@@ -36,9 +42,20 @@ export async function sendLinkCard(api, { threadId, url, text, threadType = 0 })
     } catch (e) {
         const result = await api.sendMessage(msg, threadId, type);
         const messageId = result?.message?.msgId ?? result?.msgId ?? null;
-        return { success: true, messageId, preview: false, reason: String(e?.message || e).slice(0, 200) };
+        return {
+            success: true,
+            messageId,
+            cliMsgId: cliMsgIdOf(result),
+            preview: false,
+            reason: String(e?.message || e).slice(0, 200),
+        };
     }
     const result = await api.sendLink({ link: url, msg }, threadId, type);
     const messageId = result?.msgId ?? result?.message?.msgId ?? null;
-    return { success: true, messageId: messageId === null ? null : String(messageId), preview: true };
+    return {
+        success: true,
+        messageId: messageId === null ? null : String(messageId),
+        cliMsgId: cliMsgIdOf(result),
+        preview: true,
+    };
 }

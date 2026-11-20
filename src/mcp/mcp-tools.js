@@ -1,7 +1,7 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 16 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
- * zalo_send_link, zalo_send_typing, zalo_send_file, zalo_add_reaction, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media,
+ * Registers 17 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * zalo_send_link, zalo_send_typing, zalo_send_file, zalo_add_reaction, zalo_undo_message, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media,
  * zalo_get_group_joins, zalo_list_join_requests, zalo_review_join_requests, zalo_get_labels.
  */
 
@@ -13,6 +13,7 @@ import { createLabelReader, labelsOfThread } from "./labels.js";
 import { REACTIONS, reactToMessage } from "./reactions.js";
 import { MAX_FILES_PER_SEND, sendFileFromOutbox } from "./send-file.js";
 import { buildQuote } from "./reply-quote.js";
+import { undoSentMessage } from "./undo-message.js";
 import { sendLinkCard } from "./send-link.js";
 import { OUTBOX_DIR } from "../core/send-files.js";
 import { getApi, isLoggedIn } from "../core/zalo-client.js";
@@ -191,7 +192,8 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 }
                 const result = await live().sendMessage(content, threadId, Number(threadType));
                 const messageId = result?.message?.msgId ?? result?.msgId ?? null;
-                return ok({ success: true, messageId });
+                const cliMsgId = result?.message?.cliMsgId ?? result?.cliMsgId ?? null;
+                return ok({ success: true, messageId, cliMsgId: cliMsgId === null ? null : String(cliMsgId) });
             } catch (e) {
                 console.error("[mcp-tools] zalo_send_message error:", e.message);
                 return err(e.message);
@@ -344,6 +346,42 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
                 return ok(await reactToMessage(live(), args, { buffer, historyStore }));
             } catch (e) {
                 console.error("[mcp-tools] zalo_add_reaction error:", e.message);
+                return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_undo_message ---
+    server.registerTool(
+        "zalo_undo_message",
+        {
+            title: "Undo (Recall) a Zalo Message",
+            description:
+                "Recall a message this account sent, for both sides (like Zalo's recall). Only messages this account sent can be recalled. " +
+                "`msgId` and `cliMsgId` are returned by zalo_send_message / zalo_send_link / zalo_send_file. " +
+                "`cliMsgId` is optional: it is looked up from the live buffer or history when omitted, and the call fails " +
+                "before anything reaches Zalo when it is unknown. threadType: 0=DM(User), 1=Group.",
+            inputSchema: z.object({
+                threadId: z.string().describe("Thread ID the message is in"),
+                msgId: z.string().describe("Id of the sent message to recall"),
+                cliMsgId: z
+                    .string()
+                    .optional()
+                    .describe("The message's cliMsgId. Optional: looked up from the buffer or history when omitted"),
+                threadType: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .max(1)
+                    .default(THREAD_USER)
+                    .describe("Thread type: 0=DM(User), 1=Group"),
+            }),
+        },
+        async (args) => {
+            try {
+                return ok(await undoSentMessage(live(), args, { buffer, historyStore }));
+            } catch (e) {
+                console.error("[mcp-tools] zalo_undo_message error:", e.message);
                 return err(e.message);
             }
         },
