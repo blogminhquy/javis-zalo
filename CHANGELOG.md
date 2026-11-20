@@ -2,6 +2,17 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [Unreleased]
+
+### Added
+- **`zalo_send_video` MCP tool.** Sends a video message from `https://` `videoUrl` and `thumbnailUrl` to a DM or group through the live MCP session (`threadId`, `videoUrl`, `thumbnailUrl`, optional `caption`, `duration`, `width`, `height`, `ttl`, `threadType`).
+
+### Fixed
+- **Group `send-video` requires `duration > 0` (ms).** Both `zalo_send_video` and CLI `msg send-video -t 1` now reject missing or non-positive `duration` before calling Zalo, preventing Zalo's HTTP 500 on group video sends with 0 duration while keeping `--json` output unchanged.
+
+### Security
+- **`send-video` URL and `ttl` hardening.** Rejects non-`https:` video/thumbnail URLs and negative `ttl` values, and omits signed URLs from console status and error logs.
+
 ## [1.14.0] - 2026-11-20
 
 ### Fixed

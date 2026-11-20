@@ -8,6 +8,13 @@ import { getApi } from "../core/zalo-client.js";
 import { success, error, info, output } from "../utils/output.js";
 import { extractMessageText } from "../utils/extract-message-text.js";
 import { isListening, needsLiveConfirm, sendAttachments, UPLOAD_CONFIRM_TIMEOUT_MS } from "../core/send-files.js";
+import { redactUrls, validateSendVideoInput } from "../mcp/send-video.js";
+
+/** Parse strict base-10 integer CLI option without Commander radix pitfall. */
+function parseCliInt(value) {
+    const s = String(value).trim();
+    return /^-?\d+$/.test(s) ? Number(s) : Number.NaN;
+}
 
 /** Seconds to wait for the WebSocket when `--listen` opens one. */
 const LISTEN_CONNECT_TIMEOUT_S = 15;
@@ -411,27 +418,42 @@ export function registerMsgCommands(program) {
         .requiredOption("--thumb <url>", "Thumbnail image URL")
         .option("-t, --type <n>", "Thread type: 0=User, 1=Group", "0")
         .option("-m, --caption <text>", "Caption text", "")
-        .option("-d, --duration <ms>", "Video duration in milliseconds", parseInt)
-        .option("-W, --width <px>", "Video width", parseInt, 1280)
-        .option("-H, --height <px>", "Video height", parseInt, 720)
+        .option("-d, --duration <ms>", "Video duration in milliseconds (required > 0 for groups)", parseCliInt)
+        .option("-W, --width <px>", "Video width", parseCliInt, 1280)
+        .option("-H, --height <px>", "Video height", parseCliInt, 720)
+        .option("--ttl <ms>", "Time to live in milliseconds", parseCliInt, 0)
         .action(async (threadId, videoUrl, opts) => {
             try {
-                info(`Sending video: ${videoUrl}`);
+                const valid = validateSendVideoInput({
+                    threadId,
+                    videoUrl,
+                    thumbnailUrl: opts.thumb,
+                    caption: opts.caption,
+                    duration: opts.duration,
+                    width: opts.width,
+                    height: opts.height,
+                    ttl: opts.ttl,
+                    threadType: opts.type,
+                });
+                if (!program.opts().json) {
+                    info("Sending video...");
+                }
                 const result = await getApi().sendVideo(
                     {
-                        videoUrl,
-                        thumbnailUrl: opts.thumb,
-                        msg: opts.caption,
-                        duration: opts.duration,
-                        width: opts.width,
-                        height: opts.height,
+                        videoUrl: valid.videoUrl,
+                        thumbnailUrl: valid.thumbnailUrl,
+                        msg: valid.caption,
+                        duration: valid.duration,
+                        width: valid.width,
+                        height: valid.height,
+                        ttl: valid.ttl,
                     },
-                    threadId,
-                    Number(opts.type),
+                    valid.threadId,
+                    valid.threadType,
                 );
-                output(result, program.opts().json, () => success(`Video sent to ${threadId}`));
+                output(result, program.opts().json, () => success(`Video sent to ${valid.threadId}`));
             } catch (e) {
-                error(`Send video failed: ${e.message}`);
+                error(`Send video failed: ${redactUrls(String(e?.message || e), [videoUrl, opts?.thumb])}`);
             }
         });
 

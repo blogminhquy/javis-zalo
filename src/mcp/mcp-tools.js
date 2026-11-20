@@ -1,8 +1,9 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 16 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
- * zalo_send_link, zalo_send_typing, zalo_send_file, zalo_add_reaction, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media,
- * zalo_get_group_joins, zalo_list_join_requests, zalo_review_join_requests, zalo_get_labels.
+ * Registers 17 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * zalo_send_link, zalo_send_video, zalo_send_typing, zalo_send_file, zalo_add_reaction, zalo_list_threads,
+ * zalo_search_threads, zalo_mark_read, zalo_view_media, zalo_get_group_joins, zalo_list_join_requests,
+ * zalo_review_join_requests, zalo_get_labels.
  */
 
 import { z } from "zod";
@@ -14,6 +15,7 @@ import { REACTIONS, reactToMessage } from "./reactions.js";
 import { MAX_FILES_PER_SEND, sendFileFromOutbox } from "./send-file.js";
 import { buildQuote } from "./reply-quote.js";
 import { sendLinkCard } from "./send-link.js";
+import { redactUrls, sendVideoMessage } from "./send-video.js";
 import { OUTBOX_DIR } from "../core/send-files.js";
 import { getApi, isLoggedIn } from "../core/zalo-client.js";
 
@@ -797,6 +799,52 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
             } catch (e) {
                 console.error("[mcp-tools] zalo_view_media error:", e.message);
                 return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_send_video ---
+    server.registerTool(
+        "zalo_send_video",
+        {
+            title: "Send Zalo Video Message",
+            description:
+                "Send a video message to a Zalo thread (DM or group) from HTTPS `videoUrl` and `thumbnailUrl`. " +
+                "Only https:// URLs are accepted; ttl must be >= 0 (ms). " +
+                "IMPORTANT: When threadType is 1 (Group), `duration` (in milliseconds) MUST be > 0 or the call is rejected before reaching Zalo (Zalo group forward fails with HTTP 500 on 0/missing duration). " +
+                "threadType: 0=DM(User), 1=Group.",
+            inputSchema: z.object({
+                threadId: z.string().min(1).describe("Thread ID to send video to"),
+                videoUrl: z.string().min(1).describe("HTTPS URL of the video file; http:// is rejected"),
+                thumbnailUrl: z.string().min(1).describe("HTTPS URL of the thumbnail image; http:// is rejected"),
+                caption: z.string().default("").describe("Optional caption text sent with the video"),
+                duration: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .optional()
+                    .describe(
+                        "Video duration in milliseconds. REQUIRED > 0 when threadType is 1 (Group); optional for DMs",
+                    ),
+                width: z.number().int().positive().default(1280).describe("Video width in pixels (default 1280)"),
+                height: z.number().int().positive().default(720).describe("Video height in pixels (default 720)"),
+                ttl: z.number().int().min(0).default(0).describe("Time to live in milliseconds (0 = no auto-expiry)"),
+                threadType: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .max(1)
+                    .default(THREAD_USER)
+                    .describe("Thread type: 0=DM(User), 1=Group"),
+            }),
+        },
+        async (args) => {
+            try {
+                return ok(await sendVideoMessage(live(), args));
+            } catch (e) {
+                const safeMsg = redactUrls(String(e?.message || e), [args?.videoUrl, args?.thumbnailUrl]);
+                console.error("[mcp-tools] zalo_send_video error:", safeMsg);
+                return err(safeMsg);
             }
         },
     );
