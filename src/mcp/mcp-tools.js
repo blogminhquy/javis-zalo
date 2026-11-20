@@ -6,7 +6,7 @@
  */
 
 import { z } from "zod";
-import { downloadMedia, openFile } from "./media-downloader.js";
+import { canOpenGui, downloadMedia, openFile, verifyLocalMediaFile } from "./media-downloader.js";
 import { parseTimeBoundary } from "./history-store.js";
 import { ADMIN_HINT, pendingFromApi, reviewOutcomes } from "./join-requests.js";
 import { createLabelReader, labelsOfThread } from "./labels.js";
@@ -760,40 +760,86 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
         {
             title: "View Zalo Media",
             description:
-                "Open a Zalo media file (image, audio, video) with the system viewer. " +
+                "Download and verify a Zalo media file (image, audio, video, file), optionally opening it with the system viewer. " +
                 "Media is auto-downloaded when received, organized by thread folder with date/sender metadata filenames. " +
-                "If not yet downloaded, downloads first then opens.",
+                "If not yet downloaded, downloads and validates it first.",
             inputSchema: z.object({
-                messageId: z.string().describe("Message ID from zalo_get_messages that has a media attachment"),
+                messageId: z
+                    .string()
+                    .describe("Message ID from zalo_get_messages or zalo_get_history that has a media attachment"),
                 threadId: z.string().optional().describe("Thread ID to search in. Omit to search all threads."),
                 open: z
                     .boolean()
-                    .default(mediaConfig.autoOpen ?? true)
-                    .describe("Open media with system viewer"),
+                    .default(mediaConfig.autoOpen ?? false)
+                    .describe("Open media with system viewer when a desktop GUI is available"),
             }),
         },
         async ({ messageId, threadId, open }) => {
             try {
-                const allMessages = buffer.read(threadId, 0, 9999).messages;
-                const message = allMessages.find((m) => m.id === messageId);
-                if (!message) return err(`Message ${messageId} not found in buffer`);
-                if (!message.attachment?.url) return err(`Message ${messageId} has no media attachment`);
+                const targetId = String(messageId);
+                const buffered =
+                    typeof buffer?.read === "function" ? buffer.read(threadId, 0, 9999).messages || [] : [];
+                let message = buffered.find((m) => String(m?.id ?? m?.msgId) === targetId) || null;
 
-                // Use local file if already auto-downloaded, otherwise download now
-                let localPath = message.attachment.localPath;
-                if (!localPath) {
-                    const threadName = nameCache?.get(message.threadId)?.name || null;
-                    const result = await downloadMedia(message, {
-                        downloadDir: mediaConfig.downloadDir || undefined,
-                        autoOpen: false,
-                        threadName,
-                    });
-                    localPath = result.path;
+                if (!message && historyStore) {
+                    if (threadId && typeof historyStore.find === "function") {
+                        message = historyStore.find(threadId, targetId);
+                    }
+                    if (!message && typeof historyStore.query === "function") {
+                        const { messages = [] } = historyStore.query({
+                            threadId: threadId || null,
+                            limit: 10000,
+                        });
+                        message = messages.find((m) => String(m?.msgId ?? m?.id) === targetId) || null;
+                    }
                 }
 
-                if (open) openFile(localPath);
+                if (!message) return err(`Message ${messageId} not found in buffer or history`);
+                if (!message.attachment) return err(`Message ${messageId} has no media attachment`);
+                if (!message.attachment.url && !message.attachment.localPath) {
+                    return err(`Message ${messageId} has no media attachment URL`);
+                }
 
-                return ok({ success: true, path: localPath, mediaType: message.type });
+                const mediaType = message.type || message.attachment.type || "file";
+                let localPath = message.attachment.localPath || null;
+                let verified = null;
+
+                if (localPath) {
+                    try {
+                        verified = verifyLocalMediaFile(localPath, mediaType);
+                    } catch (verifyErr) {
+                        localPath = null;
+                        if (!message.attachment.url) {
+                            throw verifyErr;
+                        }
+                    }
+                }
+
+                if (!localPath || !verified) {
+                    const threadName = nameCache?.get(message.threadId)?.name || null;
+                    const result = await downloadMedia(
+                        message.id ? message : { ...message, id: String(message.msgId ?? messageId) },
+                        {
+                            downloadDir: mediaConfig.downloadDir || undefined,
+                            autoOpen: false,
+                            threadName,
+                        },
+                    );
+                    localPath = result.path;
+                    verified = { bytes: result.bytes, mimeType: result.mimeType };
+                    message.attachment.localPath = localPath;
+                }
+
+                const shouldOpen = (open ?? mediaConfig.autoOpen ?? false) === true && canOpenGui();
+                if (shouldOpen) openFile(localPath);
+
+                return ok({
+                    success: true,
+                    path: localPath,
+                    bytes: verified.bytes,
+                    mimeType: verified.mimeType,
+                    mediaType,
+                });
             } catch (e) {
                 console.error("[mcp-tools] zalo_view_media error:", e.message);
                 return err(e.message);

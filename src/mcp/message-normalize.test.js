@@ -4,6 +4,7 @@ import {
     threadTypeLabel,
     extractReplyTo,
     extractMentions,
+    extractAttachment,
     normalizeMessage,
     toHistoryMessage,
 } from "./message-normalize.js";
@@ -157,5 +158,68 @@ describe("toHistoryMessage (history shape)", () => {
         const msg = fakeMsg();
         delete msg.data.ts;
         assert.equal(toHistoryMessage(msg, 999).timestamp, 999);
+    });
+});
+
+describe("extractAttachment (inbound media normalization)", () => {
+    it("falls back through href -> hdUrl -> normalUrl and keeps thumbUrl separate", () => {
+        const msg = fakeMsg({
+            msgType: "chat.photo",
+            content: {
+                hdUrl: "https://cdn.zalo.me/photo-hd.jpg",
+                normalUrl: "https://cdn.zalo.me/photo-normal.jpg",
+                thumb: "https://cdn.zalo.me/photo-thumb.jpg",
+                title: "Báo cáo ngày 20/11",
+            },
+        });
+        const live = normalizeMessage(msg, 1000);
+        const hist = toHistoryMessage(msg, 1000);
+
+        assert.equal(live.type, "chat.photo");
+        assert.deepEqual(live.attachment, {
+            type: "chat.photo",
+            url: "https://cdn.zalo.me/photo-hd.jpg",
+            thumbUrl: "https://cdn.zalo.me/photo-thumb.jpg",
+            description: "Báo cáo ngày 20/11",
+        });
+        assert.deepEqual(hist.attachment, live.attachment);
+    });
+
+    it("never puts video thumb into url when href/hdUrl/normalUrl are absent", () => {
+        const msg = fakeMsg({
+            msgType: "chat.video.msg",
+            content: {
+                thumb: "https://cdn.zalo.me/video-thumb.jpg",
+                title: "clip.mp4",
+                params: JSON.stringify({ duration: 5000, fileSize: "130896" }),
+            },
+        });
+        const live = normalizeMessage(msg, 1000);
+        const hist = toHistoryMessage(msg, 1000);
+
+        assert.equal(live.attachment.url, null);
+        assert.equal(live.attachment.thumbUrl, "https://cdn.zalo.me/video-thumb.jpg");
+        assert.equal(live.attachment.duration, 5000);
+        assert.equal(live.attachment.fileSize, 130896);
+        assert.deepEqual(hist.attachment, live.attachment);
+    });
+
+    it("extracts optional fileName, fileSize, and duration from object or JSON-string params", () => {
+        const att = extractAttachment(
+            {
+                href: "https://cdn.zalo.me/voice.m4a",
+                params: '{"fileName":"voice_20_11.m4a","fsize":98231,"du":6}',
+            },
+            "chat.voice",
+        );
+        assert.deepEqual(att, {
+            type: "chat.voice",
+            url: "https://cdn.zalo.me/voice.m4a",
+            description: null,
+            fileName: "voice_20_11.m4a",
+            fileSize: 98231,
+            duration: 6,
+        });
+        assert.equal("thumbUrl" in att, false);
     });
 });

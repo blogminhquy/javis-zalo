@@ -1,5 +1,8 @@
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { clearSession } from "../core/zalo-client.js";
 import { registerTools } from "./mcp-tools.js";
 
@@ -173,5 +176,116 @@ describe("zalo_send_message replyToMsgId", () => {
         const calls = [];
         await withHistory(fakeApi(calls), stored).zalo_send_message({ threadId: "g1", text: "hi", threadType: 1 });
         assert.deepEqual(calls, [["send", "hi", "g1", 1]]);
+    });
+});
+
+describe("zalo_view_media verification & history fallback", () => {
+    const validJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9]);
+
+    function mediaTools({ bufferMessages = [], historyMessages = [] } = {}) {
+        const handlers = {};
+        const buffer = {
+            read: () => ({ messages: bufferMessages, cursor: bufferMessages.length, hasMore: false }),
+        };
+        const historyStore = {
+            find: (t, id) =>
+                historyMessages.find((m) => m.threadId === t && String(m.msgId ?? m.id) === String(id)) || null,
+            query: ({ threadId } = {}) => ({
+                messages: threadId ? historyMessages.filter((m) => m.threadId === threadId) : historyMessages,
+                cursor: null,
+                hasMore: false,
+            }),
+        };
+        registerTools(
+            { registerTool: (name, _spec, fn) => (handlers[name] = fn) },
+            {},
+            buffer,
+            {},
+            { media: { autoOpen: false } },
+            null,
+            historyStore,
+            null,
+        );
+        return handlers;
+    }
+
+    it("verifies an existing local media file and returns bytes + mimeType without opening GUI by default", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "zalo-view-ok-"));
+        try {
+            const imgPath = join(dir, "sample.jpg");
+            writeFileSync(imgPath, validJpeg);
+            const h = mediaTools({
+                bufferMessages: [
+                    {
+                        id: "m100",
+                        threadId: "g1",
+                        type: "chat.photo",
+                        attachment: { type: "chat.photo", url: "https://cdn.zalo.me/a.jpg", localPath: imgPath },
+                    },
+                ],
+            });
+            const r = await h.zalo_view_media({ messageId: "m100", threadId: "g1" });
+            assert.equal(r.isError, undefined);
+            assert.deepEqual(parse(r), {
+                success: true,
+                path: imgPath,
+                bytes: validJpeg.length,
+                mimeType: "image/jpeg",
+                mediaType: "chat.photo",
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("falls back to historyStore when message was evicted from live buffer", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "zalo-view-hist-"));
+        try {
+            const imgPath = join(dir, "hist.jpg");
+            writeFileSync(imgPath, validJpeg);
+            const h = mediaTools({
+                bufferMessages: [],
+                historyMessages: [
+                    {
+                        msgId: "m200",
+                        threadId: "g1",
+                        type: "chat.photo",
+                        attachment: { type: "chat.photo", url: "https://cdn.zalo.me/b.jpg", localPath: imgPath },
+                    },
+                ],
+            });
+            const r = await h.zalo_view_media({ messageId: "m200", open: false });
+            assert.equal(r.isError, undefined);
+            const out = parse(r);
+            assert.equal(out.success, true);
+            assert.equal(out.path, imgPath);
+            assert.equal(out.bytes, validJpeg.length);
+            assert.equal(out.mimeType, "image/jpeg");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects a 0-byte or HTML-corrupt local file instead of reporting success", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "zalo-view-bad-"));
+        try {
+            const zeroPath = join(dir, "empty.jpg");
+            writeFileSync(zeroPath, Buffer.alloc(0));
+            const h = mediaTools({
+                bufferMessages: [
+                    {
+                        id: "m300",
+                        threadId: "g1",
+                        type: "chat.photo",
+                        attachment: { type: "chat.photo", url: null, localPath: zeroPath },
+                    },
+                ],
+            });
+            const r = await h.zalo_view_media({ messageId: "m300", open: false });
+            assert.equal(r.isError, true);
+            assert.match(r.content[0].text, /empty \(0 bytes\)/);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

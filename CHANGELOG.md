@@ -2,6 +2,15 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [Unreleased]
+
+### Fixed
+- **Inbound media normalization and safe downloading.**
+  - `normalizeMessage` and `toHistoryMessage` now preserve `attachment` across both live and historical reads, falling back through `href`, `hdUrl` and `normalUrl` for `attachment.url`, keeping `thumbUrl` separate so a video thumbnail is never treated as the video URL, and retaining optional `fileName`, `fileSize` and `duration` from `params`.
+  - `isDownloadableMedia` and `guessExtension` now map raw `zca-js` message types (`chat.photo`, `chat.voice`, `chat.video.msg`, `share.file`, `chat.gif`) while keeping `message.type` unchanged on the wire.
+  - `downloadMedia` enforces HTTPS and safe redirect targets, caps payloads at 60 MB, rejects 0-byte bodies and disguised HTML/JSON error pages via magic-byte and `Content-Type` validation, prevents path traversal and symlink escapes under `downloadDir`, writes atomically via a `.part` file, and never logs signed URLs.
+  - `zalo_view_media` falls back to `historyStore` when a message was evicted from the live buffer, skips `openExternal` by default or on headless Linux servers without `DISPLAY`/`WAYLAND_DISPLAY`, verifies non-zero media files on disk, and returns `{ success, path, bytes, mimeType, mediaType }`.
+
 ## [1.14.0] - 2026-11-20
 
 ### Fixed

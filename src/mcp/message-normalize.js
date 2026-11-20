@@ -58,20 +58,94 @@ export function extractMentions(msg) {
 }
 
 /**
- * The non-text part of a message: its link (`content.href`: a photo, a file, the page of a link card) and Zalo's
- * `content.title`. Shared by the live buffer and the history, so a link card filed in the history keeps its link
- * (Javis field report 20/11/2026: the history kept only the page's description, the link was lost).
+ * Parse `rawContent.params` when Zalo sends it as a JSON string or an object.
+ * @param {*} rawParams
+ * @returns {object|null}
+ */
+function parseAttachmentParams(rawParams) {
+    if (!rawParams) return null;
+    if (typeof rawParams === "object" && !Array.isArray(rawParams)) return rawParams;
+    if (typeof rawParams === "string" && rawParams.trim().startsWith("{")) {
+        try {
+            const parsed = JSON.parse(rawParams);
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+        } catch {
+            return null;
+        }
+    }
+    return null;
+}
+
+/**
+ * Return the first non-empty trimmed string among candidates, or null.
+ * @param  {...*} values
+ * @returns {string|null}
+ */
+function firstNonEmptyString(...values) {
+    for (const v of values) {
+        if (typeof v === "string" && v.trim() !== "") return v.trim();
+    }
+    return null;
+}
+
+/**
+ * Return the first finite non-negative integer among candidates, or null.
+ * @param  {...*} values
+ * @returns {number|null}
+ */
+function firstNonNegativeInt(...values) {
+    for (const v of values) {
+        if (v === null || v === undefined || v === "" || typeof v === "boolean") continue;
+        const n = Number(v);
+        if (Number.isFinite(n) && n >= 0) return Math.round(n);
+    }
+    return null;
+}
+
+/**
+ * Build a normalized attachment metadata object from non-text `msg.data.content` (photo, video, file, link card).
+ * Shared by the live buffer and the history, keeping `thumbUrl` strictly separate from `url` so a video thumbnail
+ * is never treated as the video URL, and omitting optional fields (`thumbUrl`, `fileName`, `fileSize`, `duration`)
+ * when absent.
  * @param {*} rawContent - msg.data.content
  * @param {string} [msgType] - msg.data.msgType
- * @returns {{ type: string, url: string|null, description: string|null } | null}
+ * @returns {object|null}
  */
 export function extractAttachment(rawContent, msgType) {
     if (!rawContent || typeof rawContent !== "object") return null;
-    return {
-        type: msgType,
-        url: rawContent.href || null,
-        description: rawContent.title || null,
+    const params = parseAttachmentParams(rawContent.params);
+    const url = firstNonEmptyString(
+        rawContent.href,
+        rawContent.hdUrl,
+        rawContent.normalUrl,
+        rawContent.url,
+        params?.href,
+        params?.hdUrl,
+        params?.normalUrl,
+    );
+    const thumbUrl = firstNonEmptyString(rawContent.thumb, rawContent.thumbUrl, params?.thumb, params?.thumbUrl);
+    const description = firstNonEmptyString(rawContent.title, rawContent.description);
+    const fileName = firstNonEmptyString(rawContent.fileName, rawContent.filename, params?.fileName, params?.filename);
+    const fileSize = firstNonNegativeInt(
+        rawContent.fileSize,
+        rawContent.fsize,
+        rawContent.size,
+        params?.fileSize,
+        params?.fsize,
+        params?.size,
+    );
+    const duration = firstNonNegativeInt(rawContent.duration, params?.duration, params?.du);
+
+    const attachment = {
+        type: msgType || null,
+        url,
+        description,
     };
+    if (thumbUrl !== null) attachment.thumbUrl = thumbUrl;
+    if (fileName !== null) attachment.fileName = fileName;
+    if (fileSize !== null) attachment.fileSize = fileSize;
+    if (duration !== null) attachment.duration = duration;
+    return attachment;
 }
 
 /**
@@ -113,7 +187,8 @@ export function normalizeMessage(msg, timestamp = Date.now()) {
  * @returns {object} History message
  */
 export function toHistoryMessage(msg, fallbackTs = Date.now()) {
-    const { isText, text, type } = resolveContent(msg.data?.content, msg.data?.msgType);
+    const rawContent = msg.data?.content;
+    const { isText, text, type } = resolveContent(rawContent, msg.data?.msgType);
     return {
         msgId: msg.data?.msgId,
         cliMsgId: msg.data?.cliMsgId !== null && msg.data?.cliMsgId !== undefined ? String(msg.data.cliMsgId) : null,
@@ -125,7 +200,7 @@ export function toHistoryMessage(msg, fallbackTs = Date.now()) {
         text,
         timestamp: msg.data?.ts !== null && msg.data?.ts !== undefined ? Number(msg.data.ts) : fallbackTs,
         type,
-        attachment: isText ? null : extractAttachment(msg.data?.content, msg.data?.msgType),
+        attachment: isText ? null : extractAttachment(rawContent, msg.data?.msgType),
         replyTo: extractReplyTo(msg),
         mentions: extractMentions(msg),
     };
