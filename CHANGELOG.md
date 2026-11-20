@@ -2,6 +2,24 @@
 
 All notable changes to javis-zalo. Newest first.
 
+## [Unreleased]
+
+### Added
+- **`zalo_get_group_settings` and `zalo_update_group_settings` MCP tools.** Read a group's current settings as
+  booleans (plus the raw Zalo `setting` object), and update one or more flags without resetting the rest (for
+  example `lockSendMsg: true` to lock group chat so only the owner and deputies can send messages, or `false` to
+  reopen it).
+
+### Fixed
+- **`group settings <groupId>` preserves omitted settings instead of resetting them to `false`.** Previously every
+  flag not passed on the command line defaulted to `false` (`opts.xxx ?? false`), so `--lock-msg` alone wiped
+  `enableMsgHistory`, `signAdminMsg`, `joinAppr` and `blockName`, while `setTopicOnly` had no flag and always went
+  out as `0`. Added `--set-topic-only` / `--no-set-topic-only`.
+- **Safe group settings writes (`src/core/group-settings.js`).** Reads `getGroupInfo` and `getGroupBlockedMember`
+  before calling `updateGroupSettings`, refuses to write when this account lacks admin rights or when the group has
+  active settings zca-js cannot preserve (`addMemberOnly`, `bannFeature`, `dirtyMedia`, `banDuration`, or blocked
+  members), skips no-op writes, and verifies readback afterwards.
+
 ## [1.14.0] - 2026-11-20
 
 ### Fixed

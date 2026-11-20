@@ -61,6 +61,15 @@ describe("CLI interface", () => {
         assert.match(out, /create/);
         assert.match(out, /members/);
         assert.match(out, /rename/);
+        assert.match(out, /settings/);
+    });
+
+    it("group settings --help lists all boolean flags including --set-topic-only", () => {
+        const out = run("group", "settings", "--help");
+        assert.match(out, /--lock-msg/);
+        assert.match(out, /--no-lock-msg/);
+        assert.match(out, /--set-topic-only/);
+        assert.match(out, /--no-set-topic-only/);
     });
 
     it("conv --help lists subcommands", () => {

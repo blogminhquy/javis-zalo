@@ -7,6 +7,7 @@ import { resolve } from "path";
 import { getApi } from "../core/zalo-client.js";
 import { success, error, info, output } from "../utils/output.js";
 import { describeItem, editNote, listBoard, pinActFrom, PIN_ACT } from "../core/group-notes.js";
+import { normalizeSettingsPatch, settingsFromCliOpts, updateGroupSettings } from "../core/group-settings.js";
 
 export function registerGroupCommands(program) {
     const group = program.command("group").description("Manage groups");
@@ -351,11 +352,13 @@ export function registerGroupCommands(program) {
 
     group
         .command("settings <groupId>")
-        .description("Update group settings (flags: --block-name, --sign-admin, --join-appr, etc.)")
+        .description("Update group settings (omitted flags keep their current value)")
         .option("--block-name", "Disallow members to change group name/avatar")
         .option("--no-block-name", "Allow members to change group name/avatar")
         .option("--sign-admin", "Highlight admin messages")
         .option("--no-sign-admin", "Don't highlight admin messages")
+        .option("--set-topic-only", "Disallow members to pin messages/notes/polls")
+        .option("--no-set-topic-only", "Allow members to pin messages/notes/polls")
         .option("--msg-history", "Allow new members to read recent messages")
         .option("--no-msg-history", "Hide message history from new members")
         .option("--join-appr", "Require membership approval")
@@ -370,18 +373,15 @@ export function registerGroupCommands(program) {
         .option("--no-lock-view-member", "Show full member list")
         .action(async (groupId, opts) => {
             try {
-                const settings = {
-                    blockName: opts.blockName ?? false,
-                    signAdminMsg: opts.signAdmin ?? false,
-                    enableMsgHistory: opts.msgHistory ?? false,
-                    joinAppr: opts.joinAppr ?? false,
-                    lockCreatePost: opts.lockPost ?? false,
-                    lockCreatePoll: opts.lockPoll ?? false,
-                    lockSendMsg: opts.lockMsg ?? false,
-                    lockViewMember: opts.lockViewMember ?? false,
-                };
-                const result = await getApi().updateGroupSettings(settings, groupId);
-                output(result, program.opts().json, () => success(`Group settings updated for ${groupId}`));
+                const patch = normalizeSettingsPatch(settingsFromCliOpts(opts));
+                const result = await updateGroupSettings(getApi(), groupId, patch);
+                output(result, program.opts().json, () =>
+                    success(
+                        result.changed
+                            ? `Group settings updated for ${groupId} (${result.changedFlags.join(", ")})`
+                            : `Group settings already up to date for ${groupId}`,
+                    ),
+                );
             } catch (e) {
                 error(`Update settings failed: ${e.message}`);
             }

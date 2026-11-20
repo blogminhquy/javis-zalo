@@ -1,8 +1,8 @@
 /**
  * MCP tool registrations for Zalo message access and sending.
- * Registers 16 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
+ * Registers 18 tools: zalo_get_messages, zalo_get_history, zalo_search_history, zalo_send_message,
  * zalo_send_link, zalo_send_typing, zalo_send_file, zalo_add_reaction, zalo_list_threads, zalo_search_threads, zalo_mark_read, zalo_view_media,
- * zalo_get_group_joins, zalo_list_join_requests, zalo_review_join_requests, zalo_get_labels.
+ * zalo_get_group_joins, zalo_list_join_requests, zalo_review_join_requests, zalo_get_group_settings, zalo_update_group_settings, zalo_get_labels.
  */
 
 import { z } from "zod";
@@ -14,6 +14,7 @@ import { REACTIONS, reactToMessage } from "./reactions.js";
 import { MAX_FILES_PER_SEND, sendFileFromOutbox } from "./send-file.js";
 import { buildQuote } from "./reply-quote.js";
 import { sendLinkCard } from "./send-link.js";
+import { getGroupSettings, updateGroupSettings } from "../core/group-settings.js";
 import { OUTBOX_DIR } from "../core/send-files.js";
 import { getApi, isLoggedIn } from "../core/zalo-client.js";
 
@@ -719,6 +720,97 @@ export function registerTools(server, api, buffer, filter, config, nameCache, hi
             } catch (e) {
                 console.error("[mcp-tools] zalo_review_join_requests error:", e.message);
                 return err(`${e.message}. ${ADMIN_HINT}`);
+            }
+        },
+    );
+
+    // --- zalo_get_group_settings ---
+    server.registerTool(
+        "zalo_get_group_settings",
+        {
+            title: "Get Zalo Group Settings",
+            description:
+                "Read the current settings of a Zalo group (whether regular members can send messages, change the " +
+                "group name/avatar, pin items, create notes or polls, read recent message history, or join without " +
+                "approval). Returns normalized boolean flags under `settings` plus the raw Zalo `setting` object.",
+            inputSchema: z.object({
+                threadId: z.string().min(1).describe("Group ID"),
+            }),
+        },
+        async ({ threadId }) => {
+            try {
+                const res = await getGroupSettings(live(), threadId);
+                const cachedName = nameCache?.get(threadId)?.name;
+                return ok({
+                    threadId: res.groupId,
+                    groupName: res.groupName || (cachedName && cachedName !== "?" ? cachedName : null),
+                    creatorId: res.creatorId,
+                    adminIds: res.adminIds,
+                    isAdmin: res.isAdmin,
+                    settings: res.settings,
+                    raw: res.raw,
+                });
+            } catch (e) {
+                console.error("[mcp-tools] zalo_get_group_settings error:", e.message);
+                return err(e.message);
+            }
+        },
+    );
+
+    // --- zalo_update_group_settings ---
+    server.registerTool(
+        "zalo_update_group_settings",
+        {
+            title: "Update Zalo Group Settings",
+            description:
+                "Safely update one or more boolean settings of a Zalo group while keeping every omitted setting as " +
+                "it is (for example `lockSendMsg: true` locks group chat so only the owner and deputies can send " +
+                "messages; `false` reopens it). Reads current group settings first, refuses to write when this " +
+                "account lacks admin rights or when the group carries state zca-js cannot preserve, and verifies " +
+                "readback after updating.",
+            inputSchema: z.object({
+                threadId: z.string().min(1).describe("Group ID"),
+                blockName: z
+                    .boolean()
+                    .optional()
+                    .describe("Disallow regular members from changing the group name and avatar"),
+                signAdminMsg: z.boolean().optional().describe("Highlight messages from the owner and deputies"),
+                setTopicOnly: z
+                    .boolean()
+                    .optional()
+                    .describe("Disallow regular members from pinning messages, notes, and polls"),
+                enableMsgHistory: z.boolean().optional().describe("Allow new members to read recent message history"),
+                joinAppr: z.boolean().optional().describe("Require admin approval for new members to join"),
+                lockCreatePost: z
+                    .boolean()
+                    .optional()
+                    .describe("Disallow regular members from creating notes and reminders"),
+                lockCreatePoll: z.boolean().optional().describe("Disallow regular members from creating polls"),
+                lockSendMsg: z
+                    .boolean()
+                    .optional()
+                    .describe("Disallow regular members from sending messages (lock group chat)"),
+                lockViewMember: z
+                    .boolean()
+                    .optional()
+                    .describe("Hide the full member list from regular members (community only)"),
+            }),
+        },
+        async ({ threadId, ...changes }) => {
+            try {
+                const res = await updateGroupSettings(live(), threadId, changes);
+                const cachedName = nameCache?.get(threadId)?.name;
+                return ok({
+                    success: true,
+                    threadId: res.groupId,
+                    groupName: res.groupName || (cachedName && cachedName !== "?" ? cachedName : null),
+                    changed: res.changed,
+                    changedFlags: res.changedFlags,
+                    settings: res.settings,
+                });
+            } catch (e) {
+                console.error("[mcp-tools] zalo_update_group_settings error:", e.message);
+                return err(e.message);
             }
         },
     );
